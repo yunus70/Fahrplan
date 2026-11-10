@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="de" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="google" content="notranslate">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#18212b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fahrplan">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Fahrgemeinschaft Fahrplan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: mobile-first single column, "today" ticket on top, month grid, bottom sheet for day actions */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --surface-2:#f6f8fa; --ink:#18212b; --muted:#5d6977; --line:#d7dde4;
+  --accent:#f2b705; --accent-ink:#2a2100; --sick:#d23c3c; --sick-bg:#fde8e6; --makeup:#11847a; --makeup-bg:#dff4f1;
+  --off:#8a94a0; --shadow:0 1px 2px rgba(20,30,40,.06),0 6px 20px rgba(20,30,40,.06);
+  --f-display:"Bricolage Grotesque",ui-rounded,"Segoe UI",system-ui,sans-serif;
+  --f-body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12171d; --surface:#1b222a; --surface-2:#222b34; --ink:#e9eef3; --muted:#9aa6b2; --line:#2f3a45;
+  --accent:#f5c22b; --accent-ink:#231b00; --sick:#ff7a6e; --sick-bg:#3a1f1e; --makeup:#4fd1c0; --makeup-bg:#173330;
+  --off:#7b8692; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#12171d; --surface:#1b222a; --surface-2:#222b34; --ink:#e9eef3; --muted:#9aa6b2; --line:#2f3a45;
+  --accent:#f5c22b; --accent-ink:#231b00; --sick:#ff7a6e; --sick-bg:#3a1f1e; --makeup:#4fd1c0; --makeup-bg:#173330;
+  --off:#7b8692; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px 40px}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{font-size:1.3rem;font-weight:800;letter-spacing:-.01em}
+.mark{width:30px;height:30px;border-radius:8px;background:var(--ink);display:grid;place-items:center}
+.mark i{display:block;width:4px;height:18px;background:repeating-linear-gradient(var(--accent) 0 5px,transparent 5px 8px)}
+.tabs{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+.tabs button{border:0;background:none;padding:6px 14px;border-radius:999px;font-weight:700;font-size:.9rem;color:var(--muted)}
+.tabs button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.sync{font-size:.8rem;color:var(--muted);display:flex;align-items:center;gap:6px}
+.sync::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--off)}
+.sync.ok::before{background:var(--makeup)} .sync.warn::before{background:var(--sick)}
+
+/* Today ticket */
+.ticket{background:var(--ink);color:var(--bg);border-radius:18px;padding:18px;display:grid;gap:14px;position:relative;overflow:hidden}
+.ticket .lbl{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;opacity:.7;font-weight:700}
+.ticket .who{font-family:var(--f-display);font-weight:800;font-size:2.3rem;line-height:1.05;letter-spacing:-.02em}
+.ticket .who small{display:block;font-size:.95rem;font-family:var(--f-body);font-weight:400;opacity:.8;letter-spacing:0;margin-top:4px}
+.ticket .lane{position:absolute;right:18px;top:0;bottom:0;width:6px;background:repeating-linear-gradient(var(--accent) 0 18px,transparent 18px 32px);opacity:.9}
+.ticket .next{display:flex;gap:10px;flex-wrap:wrap;padding-right:20px}
+.ticket .next span{background:rgba(127,127,127,.22);border-radius:999px;padding:4px 10px;font-size:.85rem}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.78rem;font-weight:700}
+.tag.sick{background:var(--sick-bg);color:var(--sick)} .tag.makeup{background:var(--makeup-bg);color:var(--makeup)}
+.tag.swap{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)} .tag.off{background:var(--surface-2);color:var(--off)}
+
+/* Calendar */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow)}
+.calhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.calhead h2{font-size:1.15rem;font-weight:800}
+.iconbtn{border:1px solid var(--line);background:var(--surface-2);border-radius:10px;min-width:40px;height:40px;font-size:1.1rem;font-weight:700}
+.navgrp{display:flex;gap:6px}
+.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.wd{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:center;font-weight:700;padding-bottom:4px}
+.day{border:0;background:var(--surface-2);border-radius:10px;aspect-ratio:1/1.15;max-width:100%;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:4px 2px 5px;position:relative;font-variant-numeric:tabular-nums;min-width:0}
+.day .n{font-size:.8rem;color:var(--muted);font-weight:700}
+.day.out{opacity:.35}
+.day.weekend{background:transparent}
+.day.today{box-shadow:inset 0 0 0 2px var(--accent)}
+.day.today .n{color:var(--ink)}
+.chip{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:.78rem;font-family:var(--f-display)}
+.chip.lg{width:40px;height:40px;font-size:1rem}
+.day .flag{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%}
+.flag.sick{background:var(--sick)} .flag.makeup{background:var(--makeup)} .flag.swap{background:var(--muted)}
+.day.offday .chip{display:none}
+.day.offday::after{content:"frei";font-size:.65rem;color:var(--off);margin-bottom:6px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:.8rem;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+/* Debts */
+.sectionh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.sectionh h3{font-size:1.05rem;font-weight:800}
+.sectionh p{margin:0;font-size:.8rem;color:var(--muted)}
+.debts{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.debt{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:var(--sick-bg)}
+.debt .txt{flex:1;min-width:0}
+.debt b{font-weight:700}
+.debt .cnt{font-family:var(--f-display);font-weight:800;font-size:1.3rem;color:var(--sick);font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:.9rem;margin:0}
+.members{display:flex;flex-wrap:wrap;gap:8px}
+.mem{display:flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:999px;padding:3px 10px 3px 3px;font-size:.9rem}
+.mem .chip{width:24px;height:24px;font-size:.7rem}
+.bal{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* Forms / settings */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label,.flabel{font-weight:700;font-size:.9rem}
+.hint{font-size:.8rem;color:var(--muted);margin:0}
+input[type=text],input[type=date]{font:inherit;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;min-width:0}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:4px}
+.seg button{border:0;background:none;padding:9px 4px;border-radius:9px;font-weight:700;font-size:.9rem;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.wds{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.wds button{border:1px solid var(--line);background:var(--surface-2);border-radius:9px;padding:8px 0;font-weight:700;font-size:.85rem;color:var(--muted)}
+.wds button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.mrow{display:flex;gap:8px;align-items:center}
+.mrow input{flex:1}
+.mrow .iconbtn{flex:none}
+.chipbtn{border:0;background:none;padding:0;border-radius:50%;flex:none;display:grid}
+.chipbtn .chip{width:36px;height:36px;box-shadow:0 0 0 2px var(--surface),0 0 0 3px var(--line)}
+.palette{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;padding:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px}
+.sw{border:0;aspect-ratio:1;max-width:100%;border-radius:50%;box-shadow:0 0 0 2px var(--surface)}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--ink)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.list{display:flex;flex-direction:column;gap:8px}
+.btn{border:0;border-radius:12px;padding:13px 16px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);text-align:left;display:flex;align-items:center;gap:10px;width:100%}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;justify-content:center;text-align:center}
+.btn.danger{color:var(--sick)}
+.btn.makeup{background:var(--makeup-bg);color:var(--makeup);border-color:transparent}
+.btn .chip{width:26px;height:26px;font-size:.72rem}
+.btn.ghost{background:none;border-style:dashed;color:var(--muted);justify-content:center}
+
+/* Sheet */
+.scrim{position:fixed;inset:0;background:rgba(10,15,20,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--surface);width:100%;max-width:560px;border-radius:20px 20px 0 0;max-height:88vh;overflow:auto;
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+  display:flex;flex-direction:column;gap:14px;animation:up .2s ease-out}
+.sheet .grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:0 auto}
+.sheet h3{font-size:1.25rem;font-weight:800}
+.sheet .plan{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:14px;padding:12px}
+.sheet .plan .txt{flex:1;min-width:0}
+.sheet .plan .sub{font-size:.85rem;color:var(--muted)}
+@keyframes up{from{transform:translateY(30px);opacity:.6}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.sheet{animation:none}}
+.note{font-size:.85rem;color:var(--muted);text-align:center;margin:0}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="top">
+    <div class="brand"><div class="mark"><i></i></div><h1>Fahrplan</h1></div>
+    <div class="tabs" id="tabs" hidden>
+      <button id="tab-cal" aria-pressed="true">Kalender</button>
+      <button id="tab-set" aria-pressed="false">Gruppe</button>
+    </div>
+  </div>
+  <div id="main"><p class="note">Fahrplan wird geladen …</p></div>
+  <p class="sync" id="sync">Verbinde …</p>
+</div>
+<div id="sheetRoot"></div>
+
+<script>
+(function(){
+const COLORS=['#2f6fd6','#d9622b','#14876f','#8e4fc9','#c23b6b','#6f7f12','#0f7ea8','#a0522d','#b8860b','#4a5568','#1f3a93','#e0457b'];
+let openColor=null;
+const WD=['So','Mo','Di','Mi','Do','Fr','Sa'];
+const MONTHS=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+const MODES={daily:'Täglich',weekly:'Wöchentlich',monthly:'Monatlich'};
+const REASON={krank:'krank',tausch:'getauscht',nachholen:'Nachholen',frei:'fällt aus'};
+const LS='fahrplan-local-v1';
+
+let data=null, db=null, docRef=null, tab='cal', loaded=false;
+const now=new Date(); let view={y:now.getFullYear(),m:now.getMonth()};
+
+// ---------- dates ----------
+const pad=n=>String(n).padStart(2,'0');
+const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const parse=s=>{const[a,b,c]=s.split('-').map(Number);return new Date(a,b-1,c,12)};
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const todayStr=()=>ymd(new Date());
+const fmtLong=s=>{const d=parse(s);return WD[d.getDay()]+', '+d.getDate()+'. '+MONTHS[d.getMonth()]};
+const mod=(a,n)=>((a%n)+n)%n;
+
+// ---------- schedule logic ----------
+const member=id=>data.members.find(m=>m.id===id);
+const isWork=s=>data.workdays.includes(parse(s).getDay());
+const ov=s=>(data.overrides||{})[s];
+const counts=s=>isWork(s)&&!(ov(s)&&ov(s).reason==='frei');
+
+function slot(s){
+  const d=parse(s), st=parse(data.start);
+  if(data.mode==='weekly'){
+    const mon=x=>addDays(x,-mod(x.getDay()-1,7));
+    return Math.round((mon(d)-mon(st))/(7*864e5));
+  }
+  if(data.mode==='monthly') return (d.getFullYear()-st.getFullYear())*12+(d.getMonth()-st.getMonth());
+  // daily: count driving days between start and this day; days that "fall out" don't use up a turn
+  let n=0;
+  if(s>=data.start){for(let x=st;ymd(x)<s;x=addDays(x,1)) if(counts(ymd(x))) n++;}
+  else{for(let x=d;ymd(x)<data.start;x=addDays(x,1)) if(counts(ymd(x))) n--;}
+  return n;
+}
+function planned(s){
+  if(!data.members.length||!isWork(s)) return null;
+  return data.members[mod(slot(s),data.members.length)];
+}
+function info(s){
+  const p=planned(s), o=ov(s);
+  if(!p) return {planned:null,driver:null,status:'none'};
+  if(!o) return {planned:p,driver:p,status:'normal'};
+  if(o.reason==='frei') return {planned:p,driver:null,status:'frei'};
+  return {planned:p,driver:member(o.driver)||null,status:o.reason};
+}
+// who owes whom: whenever someone drives instead of the planned person, the planned person owes them one trip
+function debts(){
+  const owe={};
+  for(const [s,o] of Object.entries(data.overrides||{})){
+    if(!o||o.reason==='frei') continue;
+    const p=planned(s); if(!p||!o.driver||o.driver===p.id) continue;
+    if(!member(o.driver)) continue;
+    const k=p.id+'>'+o.driver; owe[k]=(owe[k]||0)+1;
+  }
+  const out=[], seen=new Set();
+  for(const k of Object.keys(owe)){
+    const [a,b]=k.split('>'); const pair=[a,b].sort().join('|'); if(seen.has(pair)) continue; seen.add(pair);
+    const net=(owe[a+'>'+b]||0)-(owe[b+'>'+a]||0);
+    if(net>0) out.push({debtor:a,creditor:b,n:net}); else if(net<0) out.push({debtor:b,creditor:a,n:-net});
+  }
+  return out;
+}
+function nextDriving(from,skipFirst){
+  let d=parse(from); if(skipFirst) d=addDays(d,1);
+  for(let i=0;i<60;i++,d=addDays(d,1)){const s=ymd(d),inf=info(s); if(inf.driver) return {s,inf};}
+  return null;
+}
+
+// ---------- storage ----------
+let writing=Promise.resolve();
+function save(){
+  const snapshot=JSON.parse(JSON.stringify(data));
+  render();
+  if(db&&docRef){
+    writing=writing.then(()=>docRef.set(snapshot)).then(()=>setSync('ok','Gespeichert · für alle sichtbar'))
+      .catch(e=>setSync('warn',e&&e.code==='invalid_argument'?'Du hast nur Leserechte für diesen Plan.':'Speichern fehlgeschlagen. Bitte erneut versuchen.'));
+  } else { try{localStorage.setItem(LS,JSON.stringify(snapshot))}catch(e){} }
+}
+function setSync(cls,txt){const el=document.getElementById('sync');el.className='sync '+cls;el.textContent=txt}
+function loadLocal(){
+  try{const r=localStorage.getItem(LS); data=r?JSON.parse(r):null}catch(e){data=null}
+  loaded=true; setSync('','Offline · auf diesem Gerät gespeichert'); render();
+}
+async function init(){
+  let timer=setTimeout(()=>{ if(!loaded) loadLocal(); },10000);
+  try{ db=window.claude&&window.claude.use?await window.claude.use('db'):null }catch(e){db=null}
+  if(!db){clearTimeout(timer); loadLocal(); return;}
+  docRef=db.doc('plan/main');
+  docRef.onSnapshot(snap=>{
+    if(!snap.metadata.fromCache){clearTimeout(timer); setSync('ok','Live · alle sehen denselben Plan');}
+    loaded=true;
+    const d=snap.exists?JSON.parse(JSON.stringify(snap.data())):null;
+    data=d&&Array.isArray(d.members)?d:null;
+    if(data&&!data.overrides) data.overrides={};
+    render();
+  },err=>{clearTimeout(timer); setSync('warn','Keine Verbindung zum gemeinsamen Plan.'); if(!loaded) loadLocal();});
+}
+
+// ---------- rendering helpers ----------
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials=n=>{const p=n.trim().split(/\s+/);return (p[0][0]+(p[1]?p[1][0]:(p[0][1]||''))).toUpperCase()};
+const chip=(m,cls='')=>m?`<span class="chip ${cls}" style="background:${m.color}">${esc(initials(m.name))}</span>`:'';
+const tagFor=st=>st==='krank'?'<span class="tag sick">Ersatz wegen Krankheit</span>':st==='nachholen'?'<span class="tag makeup">Nachholfahrt</span>':st==='tausch'?'<span class="tag swap">Getauscht</span>':st==='frei'?'<span class="tag off">Fällt aus</span>':'';
+
+function render(){
+  const main=document.getElementById('main');
+  document.getElementById('tabs').hidden=!data;
+  if(!loaded){return}
+  if(!data){main.innerHTML=setupView();bindSetup();return}
+  document.getElementById('tab-cal').setAttribute('aria-pressed',tab==='cal');
+  document.getElementById('tab-set').setAttribute('aria-pressed',tab==='set');
+  main.innerHTML=tab==='cal'?calView():settingsView();
+  tab==='cal'?bindCal():bindSettings();
+}
+
+function ticketHTML(){
+  const t=todayStr(); const inf=info(t);
+  let lbl,who,sub='';
+  if(inf.driver){lbl='Heute fährt · '+fmtLong(t);who=esc(inf.driver.name);
+    if(inf.status==='krank') sub=esc(inf.planned.name)+' ist krank, '+esc(inf.driver.name)+' springt ein';
+    else if(inf.status==='nachholen') sub=esc(inf.driver.name)+' holt eine Fahrt für '+esc(inf.planned.name)+' nach';
+    else if(inf.status==='tausch') sub='Getauscht mit '+esc(inf.planned.name);
+    else sub=MODES[data.mode]+' im Wechsel';
+  } else {
+    const n=nextDriving(t,false);
+    lbl=inf.status==='frei'?'Heute fällt die Fahrt aus':'Heute keine Fahrt';
+    who=n?esc(n.inf.driver.name):'–'; sub=n?'fährt als Nächstes · '+fmtLong(n.s):'';
+  }
+  const upcoming=[];let d=parse(t);
+  for(let i=0;i<30&&upcoming.length<3;i++){d=addDays(d,1);const s=ymd(d),x=info(s);if(x.driver) upcoming.push(`<span>${WD[d.getDay()]} ${d.getDate()}.: ${esc(x.driver.name)}</span>`)}
+  return `<section class="ticket" aria-live="polite"><div class="lane"></div>
+    <div><div class="lbl">${lbl}</div><div class="who">${who}<small>${sub}</small></div></div>
+    ${upcoming.length?`<div class="next">${upcoming.join('')}</div>`:''}</section>`;
+}
+
+function calView(){
+  const first=new Date(view.y,view.m,1,12), lead=mod(first.getDay()-1,7);
+  let cells='';['Mo','Di','Mi','Do','Fr','Sa','So'].forEach(w=>cells+=`<div class="wd">${w}</div>`);
+  const t=todayStr();
+  for(let i=0;i<42;i++){
+    const d=addDays(first,i-lead), s=ymd(d), inf=info(s);
+    if(i>=35&&d.getMonth()!==view.m) break;
+    const cls=['day']; if(d.getMonth()!==view.m) cls.push('out'); if(!isWork(s)) cls.push('weekend'); if(s===t) cls.push('today'); if(inf.status==='frei') cls.push('offday');
+    const flag=inf.status==='krank'?'<span class="flag sick"></span>':inf.status==='nachholen'?'<span class="flag makeup"></span>':inf.status==='tausch'?'<span class="flag swap"></span>':'';
+    const lab=fmtLong(s)+(inf.driver?': '+inf.driver.name+' fährt':inf.status==='frei'?': fällt aus':': keine Fahrt');
+    cells+=`<button class="${cls.join(' ')}" data-d="${s}" aria-label="${esc(lab)}"><span class="n">${d.getDate()}</span>${chip(inf.driver)}${flag}</button>`;
+  }
+  const ds=debts();
+  const debtHTML=ds.length?`<ul class="debts">${ds.map(x=>{const a=member(x.debtor),b=member(x.creditor);return `<li class="debt">${chip(a)}<div class="txt"><b>${esc(a.name)}</b> muss für <b>${esc(b.name)}</b> nachholen</div><span class="cnt">${x.n}×</span></li>`}).join('')}</ul>`
+    :'<p class="empty">Alles ausgeglichen. Wenn jemand krank ist und ein anderer einspringt, erscheint hier, wer die Fahrt nachholen muss.</p>';
+  return `<div class="stack">${ticketHTML()}
+  <section class="card">
+    <div class="calhead"><h2>${MONTHS[view.m]} ${view.y}</h2>
+      <div class="navgrp"><button class="iconbtn" id="prev" aria-label="Vorheriger Monat">‹</button><button class="iconbtn" id="now" style="padding:0 10px;font-size:.85rem">Heute</button><button class="iconbtn" id="next" aria-label="Nächster Monat">›</button></div></div>
+    <div class="grid">${cells}</div>
+    <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span></div>
+    <p class="hint" style="margin-top:8px">Tippe auf einen Tag, um Krankheit, Tausch oder Ausfall einzutragen.</p>
+  </section>
+  <section class="card"><div class="sectionh"><h3>Nachholen</h3><p>offene Fahrten</p></div>${debtHTML}</section>
+  <section class="card"><div class="sectionh"><h3>Reihenfolge</h3><p>${MODES[data.mode]} ab ${fmtLong(data.start)}</p></div>
+    <div class="members">${data.members.map((m,i)=>`<span class="mem">${chip(m)}${i+1}. ${esc(m.name)}</span>`).join('')}</div></section>
+  </div>`;
+}
+function bindCal(){
+  document.getElementById('prev').onclick=()=>{view.m--;if(view.m<0){view.m=11;view.y--}render()};
+  document.getElementById('next').onclick=()=>{view.m++;if(view.m>11){view.m=0;view.y++}render()};
+  document.getElementById('now').onclick=()=>{view={y:now.getFullYear(),m:now.getMonth()};render()};
+  document.querySelectorAll('.day').forEach(b=>b.onclick=()=>openDay(b.dataset.d));
+}
+
+// ---------- day sheet ----------
+let sheetMode=null;
+function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById('sheetRoot');
+  const inf=info(s), o=ov(s);
+  let body='';
+  if(!inf.planned){
+    body=`<p class="hint">An diesem Wochentag ist keine Fahrt geplant. Die Fahrtage stellst du unter „Gruppe“ ein.</p>`;
+  } else if(sheetMode==='krankwoche'){
+    const p=inf.planned, others=data.members.filter(m=>m.id!==p.id), days=weekDaysOf(s,p.id);
+    body=`<p class="flabel">${esc(p.name)} fällt ${days.length} Fahrt${days.length===1?'':'en'} aus (${fmtShort(days[0])} bis ${fmtShort(days[days.length-1])}). Wer springt ein?</p>
+      <div class="list">${others.length>1?`<button class="btn" data-week="auto">Abwechselnd alle anderen</button>`:''}
+      ${others.map(m=>`<button class="btn" data-week="${m.id}">${chip(m)}${esc(m.name)}</button>`).join('')}</div>
+      <p class="hint">${esc(p.name)} muss alle diese Fahrten danach nachholen.</p>
+      <button class="btn ghost" id="back">Zurück</button>`;
+  } else if(sheetMode==='krank'||sheetMode==='tausch'){
+    const others=data.members.filter(m=>m.id!==inf.planned.id);
+    body=`<p class="flabel">${sheetMode==='krank'?'Wer springt für '+esc(inf.planned.name)+' ein?':'Wer fährt statt '+esc(inf.planned.name)+'?'}</p>
+      <div class="list">${others.map(m=>`<button class="btn" data-pick="${m.id}">${chip(m)}${esc(m.name)}</button>`).join('')}</div>
+      <p class="hint">${esc(inf.planned.name)} muss diese Fahrt danach nachholen.</p>
+      <button class="btn ghost" id="back">Zurück</button>`;
+  } else {
+    const p=inf.planned;
+    const makeups=debts().filter(x=>x.creditor===p.id&&!(o&&o.driver===x.debtor));
+    body=`<div class="plan">${chip(inf.driver||p,'lg')}<div class="txt">
+        <div><b>${inf.driver?esc(inf.driver.name)+' fährt':'Keine Fahrt'}</b></div>
+        <div class="sub">${inf.status==='normal'?'Laut Plan ('+MODES[data.mode].toLowerCase()+')':'Laut Plan: '+esc(p.name)}</div>
+        ${tagFor(inf.status)}</div></div>
+      <div class="list">
+        ${makeups.map(x=>{const a=member(x.debtor);return `<button class="btn makeup" data-makeup="${a.id}">${chip(a)}${esc(a.name)} holt hier nach (statt ${esc(p.name)})</button>`}).join('')}
+        ${o?'':`<button class="btn danger" id="sick">${chip(p)}${esc(p.name)} ist heute krank</button>`}
+        ${o&&o.reason==='frei'?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn danger" id="sickweek">${chip(p)}${esc(p.name)} ist die ganze Woche krank (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
+        ${o?'':`<button class="btn" id="swap">Jemand anderes fährt (Tausch)</button>`}
+        ${o&&o.reason!=='frei'?`<button class="btn" id="swap">Andere Person eintragen</button>`:''}
+        ${o&&o.reason==='frei'?'':`<button class="btn" id="off">Fahrt fällt aus (Feiertag, Ferien)</button>`}
+        ${o?`<button class="btn ghost" id="reset">Zurück auf Plan: ${esc(p.name)} fährt</button>`:''}
+      </div>`;
+  }
+  root.innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(fmtLong(s))}">
+    <div class="grab"></div><h3>${fmtLong(s)}</h3>${body}
+    <button class="btn ghost" id="close">Schließen</button></div></div>`;
+  const q=id=>document.getElementById(id);
+  q('scrim').onclick=e=>{if(e.target.id==='scrim')closeSheet()};
+  q('close').onclick=closeSheet;
+  const setO=v=>{if(v)data.overrides[s]=v;else delete data.overrides[s];closeSheet();save()};
+  if(q('sick')) q('sick').onclick=()=>openDay(s,'krank');
+  if(q('swap')) q('swap').onclick=()=>openDay(s,'tausch');
+  if(q('sickweek')) q('sickweek').onclick=()=>{const p=inf.planned,others=data.members.filter(m=>m.id!==p.id);
+    if(others.length===1) applySickWeek(s,p.id,others[0].id); else openDay(s,'krankwoche')};
+  root.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>applySickWeek(s,inf.planned.id,b.dataset.week));
+  if(q('back')) q('back').onclick=()=>openDay(s,'__keep');
+  if(q('off')) q('off').onclick=()=>setO({reason:'frei'});
+  if(q('reset')) q('reset').onclick=()=>setO(null);
+  root.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>setO({reason:sheetMode,driver:b.dataset.pick}));
+  root.querySelectorAll('[data-makeup]').forEach(b=>b.onclick=()=>setO({reason:'nachholen',driver:b.dataset.makeup}));
+  const f=root.querySelector('.sheet button:not(#close)'); if(f) f.focus();
+}
+// all days in the Mon–Sun week of s on which this person is planned to drive (cancelled days excluded)
+function weekDaysOf(s,id){
+  const d=parse(s), mon=addDays(d,-mod(d.getDay()-1,7)), out=[];
+  for(let i=0;i<7;i++){const x=ymd(addDays(mon,i)),p=planned(x),o=ov(x); if(p&&p.id===id&&!(o&&o.reason==='frei')) out.push(x)}
+  return out;
+}
+const fmtShort=s=>{const d=parse(s);return WD[d.getDay()]+' '+d.getDate()+'.'+(d.getMonth()+1)+'.'};
+function applySickWeek(s,sickId,pick){
+  const others=data.members.filter(m=>m.id!==sickId);
+  weekDaysOf(s,sickId).forEach((x,i)=>{
+    const driver=pick==='auto'?others[i%others.length].id:pick;
+    data.overrides[x]={reason:'krank',driver};
+  });
+  closeSheet(); save();
+}
+function closeSheet(){document.getElementById('sheetRoot').innerHTML=''}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
+
+// ---------- settings ----------
+function modeSeg(cur){return `<div class="seg" role="group" aria-label="Wechsel">${Object.entries(MODES).map(([k,v])=>`<button data-mode="${k}" aria-pressed="${cur===k}">${v}</button>`).join('')}</div>`}
+function wdSeg(cur){return `<div class="wds">${[1,2,3,4,5,6,0].map(d=>`<button data-wd="${d}" aria-pressed="${cur.includes(d)}">${WD[d]}</button>`).join('')}</div>`}
+function settingsView(){
+  return `<div class="stack"><section class="card stack">
+    <div class="field"><span class="flabel">Mitfahrer in Reihenfolge</span>
+      <div class="list">${data.members.map((m,i)=>`<div class="mrow"><button class="chipbtn" data-color="${m.id}" aria-expanded="${openColor===m.id}" aria-label="Farbe von ${esc(m.name)} ändern">${chip(m)}</button><input type="text" id="mem-${m.id}" value="${esc(m.name)}" aria-label="Name ${i+1}">
+        <button class="iconbtn" data-up="${i}" aria-label="Nach oben" ${i?'':'disabled'}>↑</button>
+        <button class="iconbtn" data-del="${m.id}" aria-label="${esc(m.name)} entfernen">✕</button></div>
+        ${openColor===m.id?`<div class="palette" role="group" aria-label="Farbe für ${esc(m.name)}">${COLORS.map(c=>`<button class="sw" data-sw="${c}" style="background:${c}" aria-label="Farbe ${c}" aria-pressed="${m.color===c}"></button>`).join('')}</div>`:''}`).join('')}
+      <div class="mrow"><input type="text" id="newmem" placeholder="Name hinzufügen"><button class="iconbtn" id="addmem" aria-label="Hinzufügen">+</button></div></div>
+      <p class="hint">Die erste Person fährt am Startdatum, danach wird reihum gewechselt. Tippe auf den farbigen Kreis, um die Farbe zu ändern.</p></div>
+    <div class="field"><span class="flabel">Wie wird gewechselt?</span>${modeSeg(data.mode)}
+      <p class="hint">${data.mode==='daily'?'Jeden Fahrtag fährt die nächste Person.':data.mode==='weekly'?'Eine Person fährt die ganze Woche (Mo–So), dann die nächste.':'Eine Person fährt den ganzen Kalendermonat.'}</p></div>
+    <div class="field"><label for="start">Startdatum</label><input type="date" id="start" value="${data.start}"></div>
+    <div class="field"><span class="flabel">Fahrtage</span>${wdSeg(data.workdays)}</div>
+  </section>
+  <section class="card stack"><div class="sectionh"><h3>Speichern &amp; Einträge</h3></div>
+    <p class="hint" style="margin:0">${db?'Alle, die diesen Link öffnen, sehen denselben Plan und können Krankheit oder Tausch eintragen.':'Der Plan wird nur auf diesem Gerät gespeichert. Andere Handys haben jeweils ihren eigenen Plan.'} Über „Zum Startbildschirm hinzufügen“ im Browser-Menü öffnet sich die Seite wie eine App.</p>
+    <button class="btn danger" id="clearov">Alle Einträge (krank, Tausch, Ausfall) löschen</button>
+    <p class="hint" id="clearhint" hidden></p>
+  </section></div>`;
+}
+let armClear=false;
+function bindSettings(){
+  document.querySelectorAll('[id^="mem-"]').forEach(inp=>inp.onchange=()=>{const m=member(inp.id.slice(4));const v=inp.value.trim();if(m&&v){m.name=v;save()}});
+  document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{openColor=openColor===b.dataset.color?null:b.dataset.color;render()});
+  document.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>{const m=member(openColor);if(m){m.color=b.dataset.sw;openColor=null;save()}});
+  document.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{const i=+b.dataset.up;const a=data.members;[a[i-1],a[i]]=[a[i],a[i-1]];save()});
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{if(data.members.length<=1)return;data.members=data.members.filter(m=>m.id!==b.dataset.del);save()});
+  const add=()=>{const v=document.getElementById('newmem').value.trim();if(!v)return;data.members.push(newMember(v,data.members.length));save()};
+  document.getElementById('addmem').onclick=add;
+  document.getElementById('newmem').onkeydown=e=>{if(e.key==='Enter')add()};
+  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{data.mode=b.dataset.mode;save()});
+  document.querySelectorAll('[data-wd]').forEach(b=>b.onclick=()=>{const d=+b.dataset.wd;data.workdays=data.workdays.includes(d)?data.workdays.filter(x=>x!==d):[...data.workdays,d];save()});
+  document.getElementById('start').onchange=e=>{if(e.target.value){data.start=e.target.value;save()}};
+  const c=document.getElementById('clearov');
+  c.onclick=()=>{if(!armClear){armClear=true;c.textContent='Wirklich löschen? Nochmal tippen';return}armClear=false;data.overrides={};save()};
+}
+function newMember(name,i){return {id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name,color:COLORS[i%COLORS.length]}}
+
+// ---------- setup ----------
+let draft={names:['',''],mode:'daily',start:todayStr()};
+function setupView(){
+  return `<section class="card stack">
+    <div><h2 style="font-size:1.4rem;font-weight:800">Fahrgemeinschaft anlegen</h2>
+    <p class="hint" style="margin-top:4px">Trage ein, wer mitfährt und wie ihr euch abwechselt. Danach siehst du im Kalender, wer wann fährt.</p></div>
+    <div class="field"><span class="flabel">Wer fährt mit? (in Reihenfolge)</span><div class="list">
+      ${draft.names.map((n,i)=>`<div class="mrow"><input type="text" id="d-${i}" value="${esc(n)}" placeholder="Name ${i+1}" aria-label="Name ${i+1}">${draft.names.length>2?`<button class="iconbtn" data-rm="${i}" aria-label="Entfernen">✕</button>`:''}</div>`).join('')}
+      <button class="btn ghost" id="dadd">+ Weitere Person</button></div></div>
+    <div class="field"><span class="flabel">Wie wird gewechselt?</span>${modeSeg(draft.mode)}</div>
+    <div class="field"><label for="dstart">Startdatum</label><input type="date" id="dstart" value="${draft.start}"><p class="hint">An diesem Tag fährt die erste Person der Liste.</p></div>
+    <button class="btn primary" id="create">Fahrplan erstellen</button>
+    <p class="hint" id="derr" hidden></p>
+  </section>`;
+}
+function bindSetup(){
+  const sync=()=>{draft.names=draft.names.map((_,i)=>document.getElementById('d-'+i).value);draft.start=document.getElementById('dstart').value||draft.start};
+  document.getElementById('dadd').onclick=()=>{sync();draft.names.push('');render();document.getElementById('d-'+(draft.names.length-1)).focus()};
+  document.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{sync();draft.names.splice(+b.dataset.rm,1);render()});
+  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{sync();draft.mode=b.dataset.mode;render()});
+  document.getElementById('create').onclick=()=>{sync();const names=draft.names.map(s=>s.trim()).filter(Boolean);
+    if(names.length<2){const e=document.getElementById('derr');e.hidden=false;e.textContent='Bitte mindestens zwei Namen eintragen.';return}
+    data={members:names.map(newMember),mode:draft.mode,start:draft.start,workdays:[1,2,3,4,5],overrides:{}};
+    data.members.forEach((m,i)=>m.color=COLORS[i%COLORS.length]);
+    tab='cal';save()};
+}
+
+document.getElementById('tab-cal').onclick=()=>{tab='cal';render()};
+document.getElementById('tab-set').onclick=()=>{tab='set';render()};
+init();
+if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+})();
+</script>
+</body>
+</html>
