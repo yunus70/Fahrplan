@@ -162,6 +162,11 @@ input[type=text],input[type=date]{font:inherit;color:var(--ink);background:var(-
 </div>
 <div id="sheetRoot"></div>
 
+<!-- Gemeinsames Speichern (Firebase). Die Zugangsdaten stehen in firebase-config.js -->
+<script src="firebase-config.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 (function(){
 const COLORS=['#2f6fd6','#d9622b','#14876f','#8e4fc9','#c23b6b','#6f7f12','#0f7ea8','#a0522d','#b8860b','#4a5568','#1f3a93','#e0457b'];
@@ -172,7 +177,7 @@ const MODES={daily:'Täglich',weekly:'Wöchentlich',monthly:'Monatlich'};
 const REASON={krank:'krank',tausch:'getauscht',nachholen:'Nachholen',frei:'fällt aus'};
 const LS='fahrplan-local-v1';
 
-let data=null, db=null, docRef=null, tab='cal', loaded=false;
+let data=null, tab='cal', loaded=false;
 const now=new Date(); let view={y:now.getFullYear(),m:now.getMonth()};
 
 // ---------- dates ----------
@@ -238,33 +243,116 @@ function nextDriving(from,skipFirst){
 }
 
 // ---------- storage ----------
-let writing=Promise.resolve();
-function save(){
-  const snapshot=JSON.parse(JSON.stringify(data));
-  render();
-  if(db&&docRef){
-    writing=writing.then(()=>docRef.set(snapshot)).then(()=>setSync('ok','Gespeichert · für alle sichtbar'))
-      .catch(e=>setSync('warn',e&&e.code==='invalid_argument'?'Du hast nur Leserechte für diesen Plan.':'Speichern fehlgeschlagen. Bitte erneut versuchen.'));
-  } else { try{localStorage.setItem(LS,JSON.stringify(snapshot))}catch(e){} }
+// Two ways to keep the plan:
+//  * group (Firebase): shared with everyone who has the group link, works offline and syncs when back online
+//  * local: only on this device (used when Firebase is not set up or no group was created)
+const LS_GROUP='fahrplan-gruppe', LS_CACHE='fahrplan-gruppe-cache';
+const FB=window.FAHRPLAN_FIREBASE||null;
+let fs=null, docRef=null, synced=null, unsub=null, group=null;
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+const clone=o=>JSON.parse(JSON.stringify(o));
+const CODE_RE=/^[a-z0-9]{16,40}$/;
+const cloudOn=()=>!!fs;
+
+function normalize(d){
+  if(!d||!Array.isArray(d.members)) return null;
+  d.overrides=d.overrides||{}; d.workdays=d.workdays||[1,2,3,4,5]; return d;
 }
 function setSync(cls,txt){const el=document.getElementById('sync');el.className='sync '+cls;el.textContent=txt}
+
+function save(){
+  if(group){
+    if(!docRef){ // group known, but not connected yet (first start without internet)
+      setSync('warn','Noch keine Verbindung zur Gruppe. Die Änderung wurde nicht gespeichert.');
+      const c=lsGet(LS_CACHE); data=c?normalize(JSON.parse(c)):data; render(); return;
+    }
+    render(); pushCloud(); return;
+  }
+  render(); lsSet(LS,JSON.stringify(data));
+}
+// send only what changed, so two people editing different days never overwrite each other
+function pushCloud(){
+  const cur=clone(data), prev=synced; synced=cur; lsSet(LS_CACHE,JSON.stringify(cur));
+  const fail=e=>setSync('warn','Speichern fehlgeschlagen ('+(e&&e.code||'Fehler')+'). Bitte später erneut versuchen.');
+  if(!prev){ docRef.set(cur).catch(fail); return; }
+  const FP=firebase.firestore.FieldPath, DEL=firebase.firestore.FieldValue.delete(), args=[];
+  for(const k of ['members','mode','start','workdays']) if(JSON.stringify(prev[k])!==JSON.stringify(cur[k])) args.push(new FP(k),cur[k]);
+  const po=prev.overrides||{}, co=cur.overrides||{};
+  for(const d of new Set([...Object.keys(po),...Object.keys(co)]))
+    if(JSON.stringify(po[d])!==JSON.stringify(co[d])) args.push(new FP('overrides',d), co[d]===undefined?DEL:co[d]);
+  if(args.length) docRef.update(...args).catch(fail);
+}
 function loadLocal(){
-  try{const r=localStorage.getItem(LS); data=r?JSON.parse(r):null}catch(e){data=null}
-  loaded=true; setSync('','Offline · auf diesem Gerät gespeichert'); render();
+  try{const r=lsGet(LS); data=r?normalize(JSON.parse(r)):null}catch(e){data=null}
+  loaded=true; setSync('', cloudOn()?'Nur auf diesem Gerät gespeichert · unter „Gruppe“ teilen':'Nur auf diesem Gerät gespeichert'); render();
+}
+function authReady(){
+  return new Promise(res=>{const off=firebase.auth().onAuthStateChanged(u=>{
+    if(u){off();res(u)} else firebase.auth().signInAnonymously().catch(()=>setSync('warn','Anmeldung bei der Gruppe nicht möglich. Bist du online?'));
+  })});
+}
+function newCode(){
+  const abc='abcdefghjkmnpqrstuvwxyz23456789', r=new Uint8Array(20); crypto.getRandomValues(r);
+  return Array.from(r,x=>abc[x%abc.length]).join('');
+}
+const inviteLink=()=>location.origin+location.pathname+'?g='+group;
+function readCode(txt){const m=String(txt).match(/[?&]g=([a-z0-9]+)/i);const c=(m?m[1]:String(txt)).trim().toLowerCase();return CODE_RE.test(c)?c:null}
+
+async function connectGroup(code){
+  group=code; lsSet(LS_GROUP,code);
+  const c=lsGet(LS_CACHE); if(c){data=normalize(JSON.parse(c)); synced=data?clone(data):null; loaded=true; render();}
+  setSync('','Verbinde mit der Gruppe …');
+  await authReady();
+  if(group!==code) return;
+  docRef=fs.collection('gruppen').doc(code);
+  if(unsub) unsub();
+  unsub=docRef.onSnapshot({includeMetadataChanges:true},snap=>{
+    loaded=true;
+    if(!snap.exists){
+      if(!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites){leaveGroup('Diese Gruppe gibt es nicht (mehr). Prüfe den Einladungslink.')}
+      else if(!data) render();
+      return;
+    }
+    const d=normalize(clone(snap.data()));
+    synced=clone(d); lsSet(LS_CACHE,JSON.stringify(d));
+    if(JSON.stringify(d)!==JSON.stringify(data)){data=d; render();}
+    if(snap.metadata.hasPendingWrites) setSync('','Offline gespeichert · wird abgeglichen, sobald du online bist');
+    else if(snap.metadata.fromCache) setSync('','Offline · zeigt den letzten Stand');
+    else setSync('ok','Synchronisiert · alle in der Gruppe sehen diesen Plan');
+  },err=>setSync('warn','Kein Zugriff auf die Gruppe ('+err.code+').'));
+}
+async function createGroup(d){
+  setSync('','Gruppe wird angelegt …');
+  await authReady();
+  const code=newCode();
+  docRef=fs.collection('gruppen').doc(code);
+  data=normalize(clone(d)); synced=null; group=code; lsSet(LS_GROUP,code);
+  pushCloud();
+  connectGroup(code);
+}
+function leaveGroup(msg){
+  if(unsub) unsub(); unsub=null; docRef=null; synced=null; group=null;
+  lsSet(LS_GROUP,null); lsSet(LS_CACHE,null);
+  loadLocal(); if(msg) setSync('warn',msg);
 }
 async function init(){
-  let timer=setTimeout(()=>{ if(!loaded) loadLocal(); },10000);
-  try{ db=window.claude&&window.claude.use?await window.claude.use('db'):null }catch(e){db=null}
-  if(!db){clearTimeout(timer); loadLocal(); return;}
-  docRef=db.doc('plan/main');
-  docRef.onSnapshot(snap=>{
-    if(!snap.metadata.fromCache){clearTimeout(timer); setSync('ok','Live · alle sehen denselben Plan');}
-    loaded=true;
-    const d=snap.exists?JSON.parse(JSON.stringify(snap.data())):null;
-    data=d&&Array.isArray(d.members)?d:null;
-    if(data&&!data.overrides) data.overrides={};
-    render();
-  },err=>{clearTimeout(timer); setSync('warn','Keine Verbindung zum gemeinsamen Plan.'); if(!loaded) loadLocal();});
+  // invitation link: ...?g=CODE
+  const url=new URL(location.href), inv=url.searchParams.get('g');
+  if(inv!==null){ const c=readCode(inv); if(c){lsSet(LS_GROUP,c); lsSet(LS_CACHE,null);} url.searchParams.delete('g'); history.replaceState(null,'',url.pathname+url.search+url.hash); }
+  if(FB&&window.firebase){
+    try{
+      firebase.initializeApp(FB); fs=firebase.firestore();
+      try{await fs.enablePersistence({synchronizeTabs:true})}catch(e){}
+    }catch(e){fs=null}
+  }
+  const g=lsGet(LS_GROUP);
+  if(g&&fs){connectGroup(g);return;}
+  if(g){ // group saved, but Firebase could not load (offline on very first start)
+    group=g; const c=lsGet(LS_CACHE); data=c?normalize(JSON.parse(c)):null; loaded=true;
+    setSync('warn','Keine Verbindung · Plan wird nur angezeigt'); render(); return;
+  }
+  loadLocal();
 }
 
 // ---------- rendering helpers ----------
@@ -276,7 +364,7 @@ const tagFor=st=>st==='krank'?'<span class="tag sick">Ersatz wegen Krankheit</sp
 function render(){
   const main=document.getElementById('main');
   document.getElementById('tabs').hidden=!data;
-  if(!loaded){return}
+  if(!loaded){main.innerHTML='<p class="note">Fahrplan wird geladen …</p>';return}
   if(!data){main.innerHTML=setupView();bindSetup();return}
   document.getElementById('tab-cal').setAttribute('aria-pressed',tab==='cal');
   document.getElementById('tab-set').setAttribute('aria-pressed',tab==='set');
@@ -430,11 +518,55 @@ function settingsView(){
     <div class="field"><label for="start">Startdatum</label><input type="date" id="start" value="${data.start}"></div>
     <div class="field"><span class="flabel">Fahrtage</span>${wdSeg(data.workdays)}</div>
   </section>
-  <section class="card stack"><div class="sectionh"><h3>Speichern &amp; Einträge</h3></div>
-    <p class="hint" style="margin:0">${db?'Alle, die diesen Link öffnen, sehen denselben Plan und können Krankheit oder Tausch eintragen.':'Der Plan wird nur auf diesem Gerät gespeichert. Andere Handys haben jeweils ihren eigenen Plan.'} Über „Zum Startbildschirm hinzufügen“ im Browser-Menü öffnet sich die Seite wie eine App.</p>
+  ${shareCard()}
+  <section class="card stack"><div class="sectionh"><h3>Einträge</h3></div>
     <button class="btn danger" id="clearov">Alle Einträge (krank, Tausch, Ausfall) löschen</button>
-    <p class="hint" id="clearhint" hidden></p>
   </section></div>`;
+}
+function shareCard(){
+  if(!FB) return `<section class="card stack"><div class="sectionh"><h3>Gemeinsam nutzen</h3></div>
+    <p class="hint" style="margin:0">Der Plan liegt nur auf diesem Gerät. Gemeinsames Speichern ist noch nicht eingerichtet.</p></section>`;
+  if(group) return `<section class="card stack"><div class="sectionh"><h3>Gemeinsam nutzen</h3><p>Gruppe aktiv</p></div>
+    <p class="hint" style="margin:0">Alle, die diesen Link öffnen, sehen denselben Plan und können eintragen. Das klappt auch ohne Internet: Einträge werden abgeglichen, sobald das Handy wieder online ist.</p>
+    <div class="field"><label for="invite">Einladungslink</label><input type="text" id="invite" readonly value="${esc(inviteLink())}"></div>
+    <div class="list">
+      ${navigator.share?'<button class="btn primary" id="shareinv">Link teilen (WhatsApp, SMS …)</button>':''}
+      <button class="btn" id="copyinv">Link kopieren</button>
+    </div>
+    <p class="hint" id="invhint" hidden></p>
+    <button class="btn ghost" id="leave">Gruppe auf diesem Gerät verlassen</button></section>`;
+  return `<section class="card stack"><div class="sectionh"><h3>Gemeinsam nutzen</h3></div>
+    <p class="hint" style="margin:0">Im Moment liegt der Plan nur auf diesem Gerät. Teile ihn, damit alle Mitfahrer dieselben Einträge sehen.</p>
+    <button class="btn primary" id="makegroup">Plan mit anderen teilen</button>
+    ${joinForm()}</section>`;
+}
+function joinForm(){
+  return `<div class="field"><label for="joincode">Schon eingeladen? Link oder Code einfügen</label>
+    <div class="mrow"><input type="text" id="joincode" placeholder="https://…?g=… oder Code" autocomplete="off"><button class="iconbtn" id="joinbtn" aria-label="Beitreten" style="padding:0 12px">Beitreten</button></div>
+    <p class="hint" id="joinerr" hidden></p></div>`;
+}
+function bindJoin(){
+  const b=document.getElementById('joinbtn'); if(!b) return;
+  const go=()=>{const c=readCode(document.getElementById('joincode').value);const e=document.getElementById('joinerr');
+    if(!c){e.hidden=false;e.textContent='Das ist kein gültiger Einladungslink oder Code.';return}
+    lsSet(LS_CACHE,null); data=null; loaded=false; tab='cal'; render(); connectGroup(c)};
+  b.onclick=go; document.getElementById('joincode').onkeydown=e=>{if(e.key==='Enter')go()};
+}
+let armLeave=false;
+function bindShare(){
+  bindJoin();
+  const q=id=>document.getElementById(id);
+  if(q('makegroup')) q('makegroup').onclick=()=>createGroup(data);
+  const hint=t=>{const h=q('invhint');h.hidden=false;h.textContent=t};
+  if(q('shareinv')) q('shareinv').onclick=()=>navigator.share({title:'Fahrplan',text:'Unser Fahrplan für die Fahrgemeinschaft:',url:inviteLink()}).catch(()=>{});
+  if(q('copyinv')) q('copyinv').onclick=()=>{
+    const inp=q('invite');
+    (navigator.clipboard?navigator.clipboard.writeText(inviteLink()):Promise.reject()).then(()=>hint('Link kopiert.'))
+      .catch(()=>{inp.focus();inp.select();hint('Link markiert. Jetzt kopieren.')});
+  };
+  if(q('leave')) q('leave').onclick=()=>{const b=q('leave');
+    if(!armLeave){armLeave=true;b.textContent='Wirklich verlassen? Nochmal tippen';return}
+    armLeave=false; leaveGroup(); tab='cal'; render();};
 }
 let armClear=false;
 function bindSettings(){
@@ -451,6 +583,7 @@ function bindSettings(){
   document.getElementById('start').onchange=e=>{if(e.target.value){data.start=e.target.value;save()}};
   const c=document.getElementById('clearov');
   c.onclick=()=>{if(!armClear){armClear=true;c.textContent='Wirklich löschen? Nochmal tippen';return}armClear=false;data.overrides={};save()};
+  bindShare();
 }
 function newMember(name,i){return {id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name,color:COLORS[i%COLORS.length]}}
 
@@ -467,7 +600,9 @@ function setupView(){
     <div class="field"><label for="dstart">Startdatum</label><input type="date" id="dstart" value="${draft.start}"><p class="hint">An diesem Tag fährt die erste Person der Liste.</p></div>
     <button class="btn primary" id="create">Fahrplan erstellen</button>
     <p class="hint" id="derr" hidden></p>
-  </section>`;
+    ${FB?'<p class="hint" style="margin:0">Der Plan wird automatisch als Gruppe angelegt. Unter „Gruppe“ findest du danach den Link für deine Mitfahrer.</p>':''}
+  </section>
+  ${FB?`<section class="card stack">${joinForm()}</section>`:''}`;
 }
 function bindSetup(){
   const sync=()=>{draft.names=draft.names.map((_,i)=>document.getElementById('d-'+i).value);draft.start=document.getElementById('dstart').value||draft.start};
@@ -478,7 +613,9 @@ function bindSetup(){
     if(names.length<2){const e=document.getElementById('derr');e.hidden=false;e.textContent='Bitte mindestens zwei Namen eintragen.';return}
     data={members:names.map(newMember),mode:draft.mode,start:draft.start,workdays:[1,2,3,4,5],overrides:{}};
     data.members.forEach((m,i)=>m.color=COLORS[i%COLORS.length]);
-    tab='cal';save()};
+    tab='cal';
+    if(cloudOn()) createGroup(data); else save()};
+  bindJoin();
 }
 
 document.getElementById('tab-cal').onclick=()=>{tab='cal';render()};

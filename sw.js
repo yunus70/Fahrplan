@@ -1,9 +1,10 @@
 // Service Worker: hält die App offline verfügbar.
 // Bei jeder Änderung an den Dateien die Versionsnummer erhöhen, damit Handys die neue Version laden.
-const VERSION = 'fahrplan-v1';
+const VERSION = 'fahrplan-v2';
 const APP_FILES = [
   './',
   './index.html',
+  './firebase-config.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -41,14 +42,27 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Schriften von Google: einmal laden, dann aus dem Speicher
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+  // Schriften und Firebase-Programmteile von Google: einmal laden, dann aus dem Speicher
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com' ||
+      (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/'))) {
     event.respondWith(
       caches.match(req).then(hit => hit || fetch(req).then(res => {
         const copy = res.clone();
         caches.open(VERSION).then(c => c.put(req, copy));
         return res;
       }).catch(() => new Response('', { status: 504 })))
+    );
+    return;
+  }
+
+  // Zugangsdaten: erst Netz (falls geändert), sonst aus dem Speicher
+  if (url.origin === self.location.origin && url.pathname.endsWith('/firebase-config.js')) {
+    event.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(VERSION).then(c => c.put('./firebase-config.js', copy));
+        return res;
+      }).catch(() => caches.match('./firebase-config.js'))
     );
     return;
   }
