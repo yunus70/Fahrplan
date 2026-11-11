@@ -20,18 +20,18 @@
 :root{
   --bg:#eef1f4; --surface:#ffffff; --surface-2:#f6f8fa; --ink:#18212b; --muted:#5d6977; --line:#d7dde4;
   --accent:#f2b705; --accent-ink:#2a2100; --sick:#d23c3c; --sick-bg:#fde8e6; --makeup:#11847a; --makeup-bg:#dff4f1;
-  --off:#8a94a0; --shadow:0 1px 2px rgba(20,30,40,.06),0 6px 20px rgba(20,30,40,.06);
+  --off:#8a94a0; --vac:#1d7fb8; --vac-bg:#e1f0f9; --shadow:0 1px 2px rgba(20,30,40,.06),0 6px 20px rgba(20,30,40,.06);
   --f-display:"Bricolage Grotesque",ui-rounded,"Segoe UI",system-ui,sans-serif;
   --f-body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#12171d; --surface:#1b222a; --surface-2:#222b34; --ink:#e9eef3; --muted:#9aa6b2; --line:#2f3a45;
   --accent:#f5c22b; --accent-ink:#231b00; --sick:#ff7a6e; --sick-bg:#3a1f1e; --makeup:#4fd1c0; --makeup-bg:#173330;
-  --off:#7b8692; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}}
+  --off:#7b8692; --vac:#6cc3f0; --vac-bg:#16303f; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}}
 :root[data-theme="dark"]{
   --bg:#12171d; --surface:#1b222a; --surface-2:#222b34; --ink:#e9eef3; --muted:#9aa6b2; --line:#2f3a45;
   --accent:#f5c22b; --accent-ink:#231b00; --sick:#ff7a6e; --sick-bg:#3a1f1e; --makeup:#4fd1c0; --makeup-bg:#173330;
-  --off:#7b8692; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}
+  --off:#7b8692; --vac:#6cc3f0; --vac-bg:#16303f; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
@@ -84,6 +84,26 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline
 .chip.lg{width:40px;height:40px;font-size:1rem}
 .day .flag{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%}
 .flag.sick{background:var(--sick)} .flag.makeup{background:var(--makeup)} .flag.swap{background:var(--muted)}
+.day .vacbar{position:absolute;left:6px;right:6px;bottom:2px;height:3px;border-radius:2px;background:var(--vac)}
+.day.prestart{background:transparent}
+.tag.vac{background:var(--vac-bg);color:var(--vac)}
+.btn.vac{color:var(--vac)}
+.banner{border-radius:14px;padding:14px;background:var(--sick-bg);display:flex;flex-direction:column;gap:10px}
+.banner p{margin:0}
+.banner .row{display:flex;gap:8px;flex-wrap:wrap}
+.banner .row .btn{width:auto;flex:1;justify-content:center}
+.who-pick{display:flex;flex-wrap:wrap;gap:8px}
+.who-pick .btn{width:auto}
+.vlist{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.vlist li{display:flex;align-items:center;gap:10px;background:var(--surface-2);border-radius:12px;padding:8px 10px}
+.vlist li .txt{flex:1;min-width:0;font-size:.9rem}
+.daterow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.foot{display:flex;flex-direction:column;gap:8px}
+.foot .linkbtn{border:0;background:none;padding:0;font-size:.75rem;color:var(--muted);text-decoration:underline;align-self:flex-start}
+.log{list-style:none;margin:0;padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:.78rem;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:12px;max-height:50vh;overflow:auto}
+.log li{display:grid;grid-template-columns:auto 1fr;gap:8px}
+.log time{font-variant-numeric:tabular-nums;white-space:nowrap}
+.log b{color:var(--ink);font-weight:700}
 .day.offday .chip{display:none}
 .day.offday::after{content:"frei";font-size:.65rem;color:var(--off);margin-bottom:6px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:.8rem;color:var(--muted)}
@@ -158,7 +178,11 @@ input[type=text],input[type=date]{font:inherit;color:var(--ink);background:var(-
     </div>
   </div>
   <div id="main"><p class="note">Fahrplan wird geladen …</p></div>
-  <p class="sync" id="sync">Verbinde …</p>
+  <div class="foot">
+    <p class="sync" id="sync">Verbinde …</p>
+    <button class="linkbtn" id="logbtn" aria-expanded="false" hidden>Protokoll anzeigen</button>
+    <ul class="log" id="log" hidden></ul>
+  </div>
 </div>
 <div id="sheetRoot"></div>
 
@@ -195,22 +219,44 @@ const isWork=s=>data.workdays.includes(parse(s).getDay());
 const ov=s=>(data.overrides||{})[s];
 const counts=s=>isWork(s)&&!(ov(s)&&ov(s).reason==='frei');
 
-function slot(s){
+// vacations: {id:{member, from, to}} – a person on vacation is skipped, nobody has to make up for it
+const vacList=()=>Object.entries(data.vacations||{}).map(([id,v])=>({id,...v}));
+const onVac=(id,s)=>vacList().some(v=>v.member===id&&v.from<=s&&s<=v.to);
+const vacOn=s=>vacList().filter(v=>v.from<=s&&s<=v.to&&member(v.member));
+
+function slot(s){ // weekly / monthly period number since start
   const d=parse(s), st=parse(data.start);
   if(data.mode==='weekly'){
     const mon=x=>addDays(x,-mod(x.getDay()-1,7));
     return Math.round((mon(d)-mon(st))/(7*864e5));
   }
-  if(data.mode==='monthly') return (d.getFullYear()-st.getFullYear())*12+(d.getMonth()-st.getMonth());
-  // daily: count driving days between start and this day; days that "fall out" don't use up a turn
-  let n=0;
-  if(s>=data.start){for(let x=st;ymd(x)<s;x=addDays(x,1)) if(counts(ymd(x))) n++;}
-  else{for(let x=d;ymd(x)<data.start;x=addDays(x,1)) if(counts(ymd(x))) n--;}
-  return n;
+  return (d.getFullYear()-st.getFullYear())*12+(d.getMonth()-st.getMonth());
+}
+// daily: walk forward from the start date; each driving day the next person who is not on vacation drives.
+// Days that "fall out" don't use up a turn. Cached per render.
+let sched=null;
+function dailyIdx(s){
+  if(!sched) sched={map:{},last:null,ptr:0};
+  if(s in sched.map) return sched.map[s];
+  const n=data.members.length;
+  let x=sched.last?addDays(parse(sched.last),1):parse(data.start);
+  while(ymd(x)<=s){
+    const d=ymd(x); let idx=null;
+    if(counts(d)){
+      for(let k=0;k<n;k++){const j=(sched.ptr+k)%n; if(!onVac(data.members[j].id,d)){idx=j;break}}
+      if(idx!==null) sched.ptr=idx+1;
+    }
+    sched.map[d]=idx; sched.last=d; x=addDays(x,1);
+  }
+  return s in sched.map?sched.map[s]:null;
 }
 function planned(s){
-  if(!data.members.length||!isWork(s)) return null;
-  return data.members[mod(slot(s),data.members.length)];
+  if(!data.members.length||!isWork(s)||s<data.start) return null; // nothing before the carpool starts
+  const n=data.members.length;
+  if(data.mode==='daily'){const i=dailyIdx(s);return i===null?null:data.members[i]}
+  const base=mod(slot(s),n);
+  for(let k=0;k<n;k++){const m=data.members[(base+k)%n]; if(!onVac(m.id,s)) return m}
+  return null;
 }
 function info(s){
   const p=planned(s), o=ov(s);
@@ -238,7 +284,8 @@ function debts(){
 }
 function nextDriving(from,skipFirst){
   let d=parse(from); if(skipFirst) d=addDays(d,1);
-  for(let i=0;i<60;i++,d=addDays(d,1)){const s=ymd(d),inf=info(s); if(inf.driver) return {s,inf};}
+  if(ymd(d)<data.start) d=parse(data.start);
+  for(let i=0;i<120;i++,d=addDays(d,1)){const s=ymd(d),inf=info(s); if(inf.driver) return {s,inf};}
   return null;
 }
 
@@ -257,7 +304,80 @@ const cloudOn=()=>!!fs;
 
 function normalize(d){
   if(!d||!Array.isArray(d.members)) return null;
-  d.overrides=d.overrides||{}; d.workdays=d.workdays||[1,2,3,4,5]; return d;
+  d.overrides=d.overrides||{}; d.vacations=d.vacations||{}; d.workdays=d.workdays||[1,2,3,4,5]; d.log=d.log||[]; return d;
+}
+// ---------- who am I (per device) ----------
+const meKey=()=>'fahrplan-ich-'+(group||'lokal');
+const meId=()=>{const id=lsGet(meKey());return id&&data&&member(id)?id:null};
+const meName=()=>{const id=meId();return id?member(id).name:''};
+// ---------- protocol (kept for about 3 months) ----------
+const LOG_DAYS=92;
+const logCutoff=()=>new Date(Date.now()-LOG_DAYS*864e5).toISOString();
+function addLog(x){
+  const e={t:new Date().toISOString(),w:meName(),x}, cut=logCutoff();
+  const old=(data.log||[]).filter(l=>l.t<cut);
+  data.log=[...(data.log||[]).filter(l=>l.t>=cut),e];
+  if(group&&docRef){
+    const FV=firebase.firestore.FieldValue;
+    docRef.update('log',FV.arrayUnion(e)).catch(()=>{});
+    if(old.length) docRef.update('log',FV.arrayRemove(...old)).catch(()=>{});
+  } else if(!group) lsSet(LS,JSON.stringify(data));
+  if(logOpen) renderLog();
+}
+let logOpen=false;
+function renderLog(){
+  const ul=document.getElementById('log'), btn=document.getElementById('logbtn');
+  btn.hidden=!data; if(!data){ul.hidden=true;return}
+  btn.setAttribute('aria-expanded',logOpen); btn.textContent=logOpen?'Protokoll ausblenden':'Protokoll anzeigen';
+  ul.hidden=!logOpen; if(!logOpen) return;
+  const cut=logCutoff(), items=(data.log||[]).filter(l=>l.t>=cut).sort((a,b)=>a.t<b.t?1:-1);
+  const fmt=t=>{const d=new Date(t);return pad(d.getDate())+'.'+pad(d.getMonth()+1)+'. '+pad(d.getHours())+':'+pad(d.getMinutes())};
+  ul.innerHTML=items.length?items.map(l=>`<li><time datetime="${esc(l.t)}">${fmt(l.t)}</time><span>${l.w?`<b>${esc(l.w)}</b>: `:''}${esc(l.x)}</span></li>`).join('')
+    :'<li><span>Noch keine Einträge. Hier steht, wer wann was geändert hat (letzte 3 Monate).</span></li>';
+}
+// ---------- delete everything, only when all members agree ----------
+const allAgreed=r=>!!r&&data.members.every(m=>r.ok&&r.ok[m.id]);
+function clearAll(){
+  data.overrides={}; data.vacations={};
+  if(group&&docRef){ delete data.deleteRequest; docRef.update('deleteRequest',firebase.firestore.FieldValue.delete()).catch(()=>{}); }
+  addLog('Alle Einträge gelöscht'+(group&&data.members.length>1?' (alle haben zugestimmt)':''));
+  save();
+}
+function requestDelete(){
+  const me=meId(); if(!me||!docRef) return;
+  data.deleteRequest={by:me,at:new Date().toISOString(),ok:{[me]:true}};
+  docRef.update('deleteRequest',data.deleteRequest).catch(()=>{});
+  addLog('möchte alle Einträge löschen (alle müssen zustimmen)');
+  render();
+}
+function approveDelete(){
+  const me=meId(), r=data.deleteRequest; if(!me||!r||!docRef) return;
+  r.ok=r.ok||{}; r.ok[me]=true;
+  docRef.update(new firebase.firestore.FieldPath('deleteRequest','ok',me),true).catch(()=>{});
+  addLog('stimmt dem Löschen aller Einträge zu');
+  if(allAgreed(r)) clearAll(); else render();
+}
+function rejectDelete(){
+  if(!data.deleteRequest||!docRef) return;
+  const mine=data.deleteRequest.by===meId();
+  delete data.deleteRequest;
+  docRef.update('deleteRequest',firebase.firestore.FieldValue.delete()).catch(()=>{});
+  addLog(mine?'hat den Löschantrag zurückgezogen':'hat das Löschen aller Einträge abgelehnt');
+  render();
+}
+function deleteBanner(){
+  const r=data.deleteRequest; if(!r||!group) return '';
+  const by=member(r.by), me=meId();
+  const yes=data.members.filter(m=>r.ok&&r.ok[m.id]).map(m=>m.name), no=data.members.filter(m=>!(r.ok&&r.ok[m.id])).map(m=>m.name);
+  return `<div class="banner" role="status"><p><b>${esc(by?by.name:'Jemand')}</b> möchte alle Einträge löschen (krank, Tausch, Ausfall, Urlaub). Gelöscht wird erst, wenn alle zugestimmt haben.</p>
+    <p class="hint">Zugestimmt: ${esc(yes.join(', ')||'–')} · Es fehlt: ${esc(no.join(', ')||'–')}</p>
+    ${!me?'<p class="hint">Wähle oben aus, wer du bist, um abzustimmen.</p>'
+      :r.ok&&r.ok[me]?`<div class="row"><button class="btn" data-del-no>${r.by===me?'Antrag zurückziehen':'Doch nicht löschen'}</button></div>`
+      :'<div class="row"><button class="btn danger" data-del-yes>Zustimmen</button><button class="btn" data-del-no>Ablehnen</button></div>'}</div>`;
+}
+function bindBanner(){
+  document.querySelectorAll('[data-del-yes]').forEach(b=>b.onclick=approveDelete);
+  document.querySelectorAll('[data-del-no]').forEach(b=>b.onclick=rejectDelete);
 }
 function setSync(cls,txt){const el=document.getElementById('sync');el.className='sync '+cls;el.textContent=txt}
 
@@ -278,9 +398,11 @@ function pushCloud(){
   if(!prev){ docRef.set(cur).catch(fail); return; }
   const FP=firebase.firestore.FieldPath, DEL=firebase.firestore.FieldValue.delete(), args=[];
   for(const k of ['members','mode','start','workdays']) if(JSON.stringify(prev[k])!==JSON.stringify(cur[k])) args.push(new FP(k),cur[k]);
-  const po=prev.overrides||{}, co=cur.overrides||{};
-  for(const d of new Set([...Object.keys(po),...Object.keys(co)]))
-    if(JSON.stringify(po[d])!==JSON.stringify(co[d])) args.push(new FP('overrides',d), co[d]===undefined?DEL:co[d]);
+  for(const map of ['overrides','vacations']){
+    const po=prev[map]||{}, co=cur[map]||{};
+    for(const d of new Set([...Object.keys(po),...Object.keys(co)]))
+      if(JSON.stringify(po[d])!==JSON.stringify(co[d])) args.push(new FP(map,d), co[d]===undefined?DEL:co[d]);
+  }
   if(args.length) docRef.update(...args).catch(fail);
 }
 function loadLocal(){
@@ -317,6 +439,8 @@ async function connectGroup(code){
     const d=normalize(clone(snap.data()));
     synced=clone(d); lsSet(LS_CACHE,JSON.stringify(d));
     if(JSON.stringify(d)!==JSON.stringify(data)){data=d; render();}
+    // everyone agreed to delete: the person who asked carries it out (also if they were offline meanwhile)
+    if(!snap.metadata.fromCache&&allAgreed(d.deleteRequest)&&d.deleteRequest.by===meId()) clearAll();
     if(snap.metadata.hasPendingWrites) setSync('','Offline gespeichert · wird abgeglichen, sobald du online bist');
     else if(snap.metadata.fromCache) setSync('','Offline · zeigt den letzten Stand');
     else setSync('ok','Synchronisiert · alle in der Gruppe sehen diesen Plan');
@@ -327,7 +451,10 @@ async function createGroup(d){
   await authReady();
   const code=newCode();
   docRef=fs.collection('gruppen').doc(code);
-  data=normalize(clone(d)); synced=null; group=code; lsSet(LS_GROUP,code);
+  data=normalize(clone(d)); synced=null;
+  const meLocal=lsGet(meKey());
+  addLog('Plan für die Gruppe freigegeben'); // goes into the first upload below
+  group=code; lsSet(LS_GROUP,code); if(meLocal) lsSet(meKey(),meLocal);
   pushCloud();
   connectGroup(code);
 }
@@ -362,14 +489,29 @@ const chip=(m,cls='')=>m?`<span class="chip ${cls}" style="background:${m.color}
 const tagFor=st=>st==='krank'?'<span class="tag sick">Ersatz wegen Krankheit</span>':st==='nachholen'?'<span class="tag makeup">Nachholfahrt</span>':st==='tausch'?'<span class="tag swap">Getauscht</span>':st==='frei'?'<span class="tag off">Fällt aus</span>':'';
 
 function render(){
+  sched=null;
   const main=document.getElementById('main');
   document.getElementById('tabs').hidden=!data;
+  renderLog();
   if(!loaded){main.innerHTML='<p class="note">Fahrplan wird geladen …</p>';return}
   if(!data){main.innerHTML=setupView();bindSetup();return}
   document.getElementById('tab-cal').setAttribute('aria-pressed',tab==='cal');
   document.getElementById('tab-set').setAttribute('aria-pressed',tab==='set');
   main.innerHTML=tab==='cal'?calView():settingsView();
   tab==='cal'?bindCal():bindSettings();
+  bindBanner(); bindWho();
+}
+// "Who are you?" – needed so the protocol and the delete vote know who did what
+function whoCard(force){
+  if(!data||(!force&&(!group||meId()))) return '';
+  return `<section class="card stack"><div><h3 style="font-size:1.05rem;font-weight:800">Wer bist du auf diesem Handy?</h3>
+    <p class="hint" style="margin-top:4px">Damit im Protokoll steht, wer was eingetragen hat.</p></div>
+    <div class="who-pick">${data.members.map(m=>`<button class="btn" data-me="${m.id}">${chip(m)}${esc(m.name)}</button>`).join('')}</div></section>`;
+}
+let whoForce=false;
+function bindWho(){
+  document.querySelectorAll('[data-me]').forEach(b=>b.onclick=()=>{lsSet(meKey(),b.dataset.me);whoForce=false;render()});
+  const c=document.getElementById('changeme'); if(c) c.onclick=()=>{whoForce=true;render()};
 }
 
 function ticketHTML(){
@@ -382,7 +524,7 @@ function ticketHTML(){
     else sub=MODES[data.mode]+' im Wechsel';
   } else {
     const n=nextDriving(t,false);
-    lbl=inf.status==='frei'?'Heute fällt die Fahrt aus':'Heute keine Fahrt';
+    lbl=t<data.start?'Start am '+fmtLong(data.start):inf.status==='frei'?'Heute fällt die Fahrt aus':'Heute keine Fahrt';
     who=n?esc(n.inf.driver.name):'–'; sub=n?'fährt als Nächstes · '+fmtLong(n.s):'';
   }
   const upcoming=[];let d=parse(t);
@@ -399,20 +541,21 @@ function calView(){
   for(let i=0;i<42;i++){
     const d=addDays(first,i-lead), s=ymd(d), inf=info(s);
     if(i>=35&&d.getMonth()!==view.m) break;
-    const cls=['day']; if(d.getMonth()!==view.m) cls.push('out'); if(!isWork(s)) cls.push('weekend'); if(s===t) cls.push('today'); if(inf.status==='frei') cls.push('offday');
+    const cls=['day']; if(d.getMonth()!==view.m) cls.push('out'); if(!isWork(s)) cls.push('weekend'); if(s===t) cls.push('today'); if(inf.status==='frei') cls.push('offday'); if(s<data.start) cls.push('prestart');
+    const vac=vacOn(s);
     const flag=inf.status==='krank'?'<span class="flag sick"></span>':inf.status==='nachholen'?'<span class="flag makeup"></span>':inf.status==='tausch'?'<span class="flag swap"></span>':'';
-    const lab=fmtLong(s)+(inf.driver?': '+inf.driver.name+' fährt':inf.status==='frei'?': fällt aus':': keine Fahrt');
-    cells+=`<button class="${cls.join(' ')}" data-d="${s}" aria-label="${esc(lab)}"><span class="n">${d.getDate()}</span>${chip(inf.driver)}${flag}</button>`;
+    const lab=fmtLong(s)+(inf.driver?': '+inf.driver.name+' fährt':inf.status==='frei'?': fällt aus':': keine Fahrt')+(vac.length?', Urlaub: '+vac.map(v=>member(v.member).name).join(', '):'');
+    cells+=`<button class="${cls.join(' ')}" data-d="${s}" aria-label="${esc(lab)}"><span class="n">${d.getDate()}</span>${chip(inf.driver)}${flag}${vac.length?'<span class="vacbar"></span>':''}</button>`;
   }
   const ds=debts();
   const debtHTML=ds.length?`<ul class="debts">${ds.map(x=>{const a=member(x.debtor),b=member(x.creditor);return `<li class="debt">${chip(a)}<div class="txt"><b>${esc(a.name)}</b> muss für <b>${esc(b.name)}</b> nachholen</div><span class="cnt">${x.n}×</span></li>`}).join('')}</ul>`
     :'<p class="empty">Alles ausgeglichen. Wenn jemand krank ist und ein anderer einspringt, erscheint hier, wer die Fahrt nachholen muss.</p>';
-  return `<div class="stack">${ticketHTML()}
+  return `<div class="stack">${whoCard(false)}${deleteBanner()}${ticketHTML()}
   <section class="card">
     <div class="calhead"><h2>${MONTHS[view.m]} ${view.y}</h2>
       <div class="navgrp"><button class="iconbtn" id="prev" aria-label="Vorheriger Monat">‹</button><button class="iconbtn" id="now" style="padding:0 10px;font-size:.85rem">Heute</button><button class="iconbtn" id="next" aria-label="Nächster Monat">›</button></div></div>
     <div class="grid">${cells}</div>
-    <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span></div>
+    <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span><span><i style="background:var(--vac);border-radius:2px;width:14px;height:4px"></i>Urlaub</span></div>
     <p class="hint" style="margin-top:8px">Tippe auf einen Tag, um Krankheit, Tausch oder Ausfall einzutragen.</p>
   </section>
   <section class="card"><div class="sectionh"><h3>Nachholen</h3><p>offene Fahrten</p></div>${debtHTML}</section>
@@ -428,12 +571,26 @@ function bindCal(){
 }
 
 // ---------- day sheet ----------
-let sheetMode=null;
+let sheetMode=null, vacDraft={member:'',from:'',to:''};
 function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById('sheetRoot');
   const inf=info(s), o=ov(s);
   let body='';
-  if(!inf.planned){
-    body=`<p class="hint">An diesem Wochentag ist keine Fahrt geplant. Die Fahrtage stellst du unter „Gruppe“ ein.</p>`;
+  const vac=vacOn(s);
+  const vacInfo=vac.length?`<ul class="vlist">${vac.map(v=>{const m=member(v.member);return `<li>${chip(m)}<span class="txt"><b>${esc(m.name)}</b> im Urlaub, ${fmtShort(v.from)} bis ${fmtShort(v.to)}</span><button class="iconbtn" data-unvac="${v.id}" aria-label="Urlaub von ${esc(m.name)} löschen">✕</button></li>`}).join('')}</ul>`:'';
+  const vacBtn=`<button class="btn vac" id="addvac">Urlaub eintragen</button>`;
+  if(sheetMode==='urlaub'){
+    body=`<p class="flabel">Wer hat Urlaub?</p>
+      <div class="who-pick">${data.members.map(m=>`<button class="btn" data-vacwho="${m.id}" aria-pressed="${vacDraft.member===m.id}" style="${vacDraft.member===m.id?'border-color:var(--vac);box-shadow:0 0 0 2px var(--vac)':''}">${chip(m)}${esc(m.name)}</button>`).join('')}</div>
+      <div class="daterow"><div class="field"><label for="vfrom">Von</label><input type="date" id="vfrom" value="${vacDraft.from}"></div>
+      <div class="field"><label for="vto">Bis</label><input type="date" id="vto" value="${vacDraft.to}"></div></div>
+      <p class="hint">In dieser Zeit wird die Person übersprungen. Die anderen wechseln sich ab, niemand muss etwas nachholen.</p>
+      <p class="hint" id="vacerr" hidden style="color:var(--sick)"></p>
+      <button class="btn primary" id="savevac">Urlaub speichern</button>
+      <button class="btn ghost" id="back">Zurück</button>`;
+  } else if(s<data.start){
+    body=`<p class="hint">Die Fahrgemeinschaft startet am ${fmtLong(data.start)}. Vorher ist niemand eingeteilt.</p>${vacInfo}${vacBtn}`;
+  } else if(!inf.planned){
+    body=`${vacInfo}<p class="hint">${vac.length&&isWork(s)?'An diesem Tag sind alle im Urlaub.':'An diesem Wochentag ist keine Fahrt geplant. Die Fahrtage stellst du unter „Gruppe“ ein.'}</p>${vacBtn}`;
   } else if(sheetMode==='krankwoche'){
     const p=inf.planned, others=data.members.filter(m=>m.id!==p.id), days=weekDaysOf(s,p.id);
     body=`<p class="flabel">${esc(p.name)} fällt ${days.length} Fahrt${days.length===1?'':'en'} aus (${fmtShort(days[0])} bis ${fmtShort(days[days.length-1])}). Wer springt ein?</p>
@@ -454,6 +611,7 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
         <div><b>${inf.driver?esc(inf.driver.name)+' fährt':'Keine Fahrt'}</b></div>
         <div class="sub">${inf.status==='normal'?'Laut Plan ('+MODES[data.mode].toLowerCase()+')':'Laut Plan: '+esc(p.name)}</div>
         ${tagFor(inf.status)}</div></div>
+      ${vacInfo}
       <div class="list">
         ${makeups.map(x=>{const a=member(x.debtor);return `<button class="btn makeup" data-makeup="${a.id}">${chip(a)}${esc(a.name)} holt hier nach (statt ${esc(p.name)})</button>`}).join('')}
         ${o?'':`<button class="btn danger" id="sick">${chip(p)}${esc(p.name)} ist heute krank</button>`}
@@ -461,6 +619,7 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
         ${o?'':`<button class="btn" id="swap">Jemand anderes fährt (Tausch)</button>`}
         ${o&&o.reason!=='frei'?`<button class="btn" id="swap">Andere Person eintragen</button>`:''}
         ${o&&o.reason==='frei'?'':`<button class="btn" id="off">Fahrt fällt aus (Feiertag, Ferien)</button>`}
+        ${vacBtn}
         ${o?`<button class="btn ghost" id="reset">Zurück auf Plan: ${esc(p.name)} fährt</button>`:''}
       </div>`;
   }
@@ -470,7 +629,25 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
   const q=id=>document.getElementById(id);
   q('scrim').onclick=e=>{if(e.target.id==='scrim')closeSheet()};
   q('close').onclick=closeSheet;
-  const setO=v=>{if(v)data.overrides[s]=v;else delete data.overrides[s];closeSheet();save()};
+  const setO=v=>{
+    const p=inf.planned, d=v&&v.driver?member(v.driver):null, ds=fmtShort(s);
+    addLog(!v?`${ds}: zurück auf Plan (${p.name} fährt)`:v.reason==='frei'?`${ds}: Fahrt fällt aus`
+      :v.reason==='krank'?`${ds}: ${p.name} krank, ${d.name} springt ein`:v.reason==='nachholen'?`${ds}: ${d.name} holt für ${p.name} nach`
+      :`${ds}: ${d.name} fährt statt ${p.name}`);
+    if(v)data.overrides[s]=v;else delete data.overrides[s];closeSheet();save()};
+  if(q('addvac')) q('addvac').onclick=()=>{vacDraft={member:meId()||'',from:s,to:s};openDay(s,'urlaub')};
+  root.querySelectorAll('[data-vacwho]').forEach(b=>b.onclick=()=>{vacDraft.member=b.dataset.vacwho;vacDraft.from=q('vfrom').value;vacDraft.to=q('vto').value;openDay(s,'urlaub')});
+  if(q('savevac')) q('savevac').onclick=()=>{
+    const f=q('vfrom').value,t=q('vto').value,err=q('vacerr');
+    if(!vacDraft.member){err.hidden=false;err.textContent='Bitte auswählen, wer Urlaub hat.';return}
+    if(!f||!t||t<f){err.hidden=false;err.textContent='Das Enddatum muss am oder nach dem Startdatum liegen.';return}
+    const id='v'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    data.vacations[id]={member:vacDraft.member,from:f,to:t};
+    addLog(`Urlaub: ${member(vacDraft.member).name}, ${fmtShort(f)} bis ${fmtShort(t)}`);
+    closeSheet();save()};
+  root.querySelectorAll('[data-unvac]').forEach(b=>b.onclick=()=>{const v=data.vacations[b.dataset.unvac];if(!v)return;
+    addLog(`Urlaub gelöscht: ${member(v.member)?member(v.member).name:'?'}, ${fmtShort(v.from)} bis ${fmtShort(v.to)}`);
+    delete data.vacations[b.dataset.unvac];closeSheet();save()});
   if(q('sick')) q('sick').onclick=()=>openDay(s,'krank');
   if(q('swap')) q('swap').onclick=()=>openDay(s,'tausch');
   if(q('sickweek')) q('sickweek').onclick=()=>{const p=inf.planned,others=data.members.filter(m=>m.id!==p.id);
@@ -491,8 +668,9 @@ function weekDaysOf(s,id){
 }
 const fmtShort=s=>{const d=parse(s);return WD[d.getDay()]+' '+d.getDate()+'.'+(d.getMonth()+1)+'.'};
 function applySickWeek(s,sickId,pick){
-  const others=data.members.filter(m=>m.id!==sickId);
-  weekDaysOf(s,sickId).forEach((x,i)=>{
+  const others=data.members.filter(m=>m.id!==sickId), days=weekDaysOf(s,sickId);
+  if(days.length) addLog(`${member(sickId).name} ist die Woche krank (${days.map(fmtShort).join(', ')})`);
+  days.forEach((x,i)=>{
     const driver=pick==='auto'?others[i%others.length].id:pick;
     data.overrides[x]={reason:'krank',driver};
   });
@@ -505,7 +683,8 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 function modeSeg(cur){return `<div class="seg" role="group" aria-label="Wechsel">${Object.entries(MODES).map(([k,v])=>`<button data-mode="${k}" aria-pressed="${cur===k}">${v}</button>`).join('')}</div>`}
 function wdSeg(cur){return `<div class="wds">${[1,2,3,4,5,6,0].map(d=>`<button data-wd="${d}" aria-pressed="${cur.includes(d)}">${WD[d]}</button>`).join('')}</div>`}
 function settingsView(){
-  return `<div class="stack"><section class="card stack">
+  const today=todayStr(), upcoming=vacList().filter(v=>v.to>=today&&member(v.member)).sort((a,b)=>a.from<b.from?-1:1);
+  return `<div class="stack">${whoCard(whoForce)}${deleteBanner()}<section class="card stack">
     <div class="field"><span class="flabel">Mitfahrer in Reihenfolge</span>
       <div class="list">${data.members.map((m,i)=>`<div class="mrow"><button class="chipbtn" data-color="${m.id}" aria-expanded="${openColor===m.id}" aria-label="Farbe von ${esc(m.name)} ändern">${chip(m)}</button><input type="text" id="mem-${m.id}" value="${esc(m.name)}" aria-label="Name ${i+1}">
         <button class="iconbtn" data-up="${i}" aria-label="Nach oben" ${i?'':'disabled'}>↑</button>
@@ -518,9 +697,17 @@ function settingsView(){
     <div class="field"><label for="start">Startdatum</label><input type="date" id="start" value="${data.start}"></div>
     <div class="field"><span class="flabel">Fahrtage</span>${wdSeg(data.workdays)}</div>
   </section>
+  <section class="card stack"><div class="sectionh"><h3>Urlaub</h3><p>Wer im Urlaub ist, wird übersprungen</p></div>
+    ${upcoming.length?`<ul class="vlist">${upcoming.map(v=>{const m=member(v.member);return `<li>${chip(m)}<span class="txt"><b>${esc(m.name)}</b>, ${fmtShort(v.from)} bis ${fmtShort(v.to)}</span><button class="iconbtn" data-unvac2="${v.id}" aria-label="Urlaub von ${esc(m.name)} löschen">✕</button></li>`}).join('')}</ul>`
+      :'<p class="hint" style="margin:0">Kein Urlaub eingetragen. Tippe im Kalender auf einen Tag und dann auf „Urlaub eintragen“.</p>'}
+  </section>
   ${shareCard()}
   <section class="card stack"><div class="sectionh"><h3>Einträge</h3></div>
-    <button class="btn danger" id="clearov">Alle Einträge (krank, Tausch, Ausfall) löschen</button>
+    ${group&&data.members.length>1
+      ?(data.deleteRequest?'<p class="hint" style="margin:0">Ein Löschantrag läuft bereits (siehe oben).</p>'
+        :`<button class="btn danger" id="reqdel" ${meId()?'':'disabled'}>Alle Einträge löschen …</button>
+          <p class="hint" style="margin:0">${meId()?'Gelöscht wird erst, wenn alle aus der Gruppe zugestimmt haben.':'Wähle zuerst oben aus, wer du bist.'}</p>`)
+      :'<button class="btn danger" id="clearov">Alle Einträge (krank, Tausch, Ausfall, Urlaub) löschen</button>'}
   </section></div>`;
 }
 function shareCard(){
@@ -534,6 +721,7 @@ function shareCard(){
       <button class="btn" id="copyinv">Link kopieren</button>
     </div>
     <p class="hint" id="invhint" hidden></p>
+    <p class="hint" style="margin:0">Auf diesem Handy bist du: <b>${esc(meName()||'noch nicht ausgewählt')}</b> · <button class="linkbtn" id="changeme" style="border:0;background:none;padding:0;color:inherit;text-decoration:underline;font:inherit">ändern</button></p>
     <button class="btn ghost" id="leave">Gruppe auf diesem Gerät verlassen</button></section>`;
   return `<section class="card stack"><div class="sectionh"><h3>Gemeinsam nutzen</h3></div>
     <p class="hint" style="margin:0">Im Moment liegt der Plan nur auf diesem Gerät. Teile ihn, damit alle Mitfahrer dieselben Einträge sehen.</p>
@@ -570,19 +758,24 @@ function bindShare(){
 }
 let armClear=false;
 function bindSettings(){
-  document.querySelectorAll('[id^="mem-"]').forEach(inp=>inp.onchange=()=>{const m=member(inp.id.slice(4));const v=inp.value.trim();if(m&&v){m.name=v;save()}});
+  document.querySelectorAll('[id^="mem-"]').forEach(inp=>inp.onchange=()=>{const m=member(inp.id.slice(4));const v=inp.value.trim();if(m&&v&&v!==m.name){addLog(`Name geändert: ${m.name} → ${v}`);m.name=v;save()}});
   document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{openColor=openColor===b.dataset.color?null:b.dataset.color;render()});
-  document.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>{const m=member(openColor);if(m){m.color=b.dataset.sw;openColor=null;save()}});
-  document.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{const i=+b.dataset.up;const a=data.members;[a[i-1],a[i]]=[a[i],a[i-1]];save()});
-  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{if(data.members.length<=1)return;data.members=data.members.filter(m=>m.id!==b.dataset.del);save()});
-  const add=()=>{const v=document.getElementById('newmem').value.trim();if(!v)return;data.members.push(newMember(v,data.members.length));save()};
+  document.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>{const m=member(openColor);if(m){m.color=b.dataset.sw;openColor=null;addLog(`Farbe von ${m.name} geändert`);save()}});
+  document.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{const i=+b.dataset.up;const a=data.members;[a[i-1],a[i]]=[a[i],a[i-1]];addLog(`Reihenfolge geändert: ${a.map(m=>m.name).join(', ')}`);save()});
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{if(data.members.length<=1)return;const m=member(b.dataset.del);addLog(`${m.name} aus der Fahrgemeinschaft entfernt`);data.members=data.members.filter(x=>x.id!==b.dataset.del);save()});
+  const add=()=>{const v=document.getElementById('newmem').value.trim();if(!v)return;data.members.push(newMember(v,data.members.length));addLog(`${v} hinzugefügt`);save()};
   document.getElementById('addmem').onclick=add;
   document.getElementById('newmem').onkeydown=e=>{if(e.key==='Enter')add()};
-  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{data.mode=b.dataset.mode;save()});
-  document.querySelectorAll('[data-wd]').forEach(b=>b.onclick=()=>{const d=+b.dataset.wd;data.workdays=data.workdays.includes(d)?data.workdays.filter(x=>x!==d):[...data.workdays,d];save()});
-  document.getElementById('start').onchange=e=>{if(e.target.value){data.start=e.target.value;save()}};
+  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{if(data.mode===b.dataset.mode)return;data.mode=b.dataset.mode;addLog(`Wechsel geändert: ${MODES[data.mode]}`);save()});
+  document.querySelectorAll('[data-wd]').forEach(b=>b.onclick=()=>{const d=+b.dataset.wd;data.workdays=data.workdays.includes(d)?data.workdays.filter(x=>x!==d):[...data.workdays,d];
+    addLog(`Fahrtage geändert: ${[1,2,3,4,5,6,0].filter(x=>data.workdays.includes(x)).map(x=>WD[x]).join(', ')||'keine'}`);save()});
+  document.getElementById('start').onchange=e=>{if(e.target.value&&e.target.value!==data.start){data.start=e.target.value;addLog(`Startdatum geändert: ${fmtShort(data.start)}`);save()}};
   const c=document.getElementById('clearov');
-  c.onclick=()=>{if(!armClear){armClear=true;c.textContent='Wirklich löschen? Nochmal tippen';return}armClear=false;data.overrides={};save()};
+  if(c) c.onclick=()=>{if(!armClear){armClear=true;c.textContent='Wirklich löschen? Nochmal tippen';return}armClear=false;clearAll()};
+  const rq=document.getElementById('reqdel');
+  if(rq) rq.onclick=()=>{if(!armClear){armClear=true;rq.textContent='Löschen beantragen? Nochmal tippen';return}armClear=false;requestDelete()};
+  document.querySelectorAll('[data-unvac2]').forEach(b=>b.onclick=()=>{const v=data.vacations[b.dataset.unvac2];if(!v)return;
+    addLog(`Urlaub gelöscht: ${member(v.member).name}, ${fmtShort(v.from)} bis ${fmtShort(v.to)}`);delete data.vacations[b.dataset.unvac2];save()});
   bindShare();
 }
 function newMember(name,i){return {id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name,color:COLORS[i%COLORS.length]}}
@@ -611,7 +804,8 @@ function bindSetup(){
   document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{sync();draft.mode=b.dataset.mode;render()});
   document.getElementById('create').onclick=()=>{sync();const names=draft.names.map(s=>s.trim()).filter(Boolean);
     if(names.length<2){const e=document.getElementById('derr');e.hidden=false;e.textContent='Bitte mindestens zwei Namen eintragen.';return}
-    data={members:names.map(newMember),mode:draft.mode,start:draft.start,workdays:[1,2,3,4,5],overrides:{}};
+    data={members:names.map(newMember),mode:draft.mode,start:draft.start,workdays:[1,2,3,4,5],overrides:{},vacations:{},log:[]};
+    addLog(`Fahrplan angelegt: ${names.join(', ')}, ${MODES[draft.mode]} ab ${fmtShort(draft.start)}`);
     data.members.forEach((m,i)=>m.color=COLORS[i%COLORS.length]);
     tab='cal';
     if(cloudOn()) createGroup(data); else save()};
@@ -620,6 +814,7 @@ function bindSetup(){
 
 document.getElementById('tab-cal').onclick=()=>{tab='cal';render()};
 document.getElementById('tab-set').onclick=()=>{tab='set';render()};
+document.getElementById('logbtn').onclick=()=>{logOpen=!logOpen;renderLog()};
 init();
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){
   window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
