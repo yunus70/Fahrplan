@@ -591,9 +591,11 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
     body=`<p class="hint">Die Fahrgemeinschaft startet am ${fmtLong(data.start)}. Vorher ist niemand eingeteilt.</p>${vacInfo}${vacBtn}`;
   } else if(!inf.planned){
     body=`${vacInfo}<p class="hint">${vac.length&&isWork(s)?'An diesem Tag sind alle im Urlaub.':'An diesem Wochentag ist keine Fahrt geplant. Die Fahrtage stellst du unter „Gruppe“ ein.'}</p>${vacBtn}`;
-  } else if(sheetMode==='krankwoche'){
-    const p=inf.planned, others=data.members.filter(m=>m.id!==p.id), days=weekDaysOf(s,p.id);
-    body=`<p class="flabel">${esc(p.name)} fällt ${days.length} Fahrt${days.length===1?'':'en'} aus (${fmtShort(days[0])} bis ${fmtShort(days[days.length-1])}). Wer springt ein?</p>
+  } else if(sheetMode==='krankwoche'||sheetMode==='tauschwoche'){
+    const p=inf.planned, others=data.members.filter(m=>m.id!==p.id), days=weekDaysOf(s,p.id), range=`${fmtShort(days[0])} bis ${fmtShort(days[days.length-1])}`;
+    body=`<p class="flabel">${sheetMode==='krankwoche'
+        ?`${esc(p.name)} fällt ${days.length} Fahrt${days.length===1?'':'en'} aus (${range}). Wer springt ein?`
+        :`Wer fährt diese Woche statt ${esc(p.name)}? (${days.length} Fahrt${days.length===1?'':'en'}, ${range})`}</p>
       <div class="list">${others.length>1?`<button class="btn" data-week="auto">Abwechselnd alle anderen</button>`:''}
       ${others.map(m=>`<button class="btn" data-week="${m.id}">${chip(m)}${esc(m.name)}</button>`).join('')}</div>
       <p class="hint">${esc(p.name)} muss alle diese Fahrten danach nachholen.</p>
@@ -617,6 +619,7 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
         ${o?'':`<button class="btn danger" id="sick">${chip(p)}${esc(p.name)} ist heute krank</button>`}
         ${o&&o.reason==='frei'?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn danger" id="sickweek">${chip(p)}${esc(p.name)} ist die ganze Woche krank (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
         ${o?'':`<button class="btn" id="swap">Jemand anderes fährt (Tausch)</button>`}
+        ${o&&o.reason==='frei'?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn" id="swapweek">Jemand anderes fährt die ganze Woche (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
         ${o&&o.reason!=='frei'?`<button class="btn" id="swap">Andere Person eintragen</button>`:''}
         ${o&&o.reason==='frei'?'':`<button class="btn" id="off">Fahrt fällt aus (Feiertag, Ferien)</button>`}
         ${vacBtn}
@@ -651,8 +654,10 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
   if(q('sick')) q('sick').onclick=()=>openDay(s,'krank');
   if(q('swap')) q('swap').onclick=()=>openDay(s,'tausch');
   if(q('sickweek')) q('sickweek').onclick=()=>{const p=inf.planned,others=data.members.filter(m=>m.id!==p.id);
-    if(others.length===1) applySickWeek(s,p.id,others[0].id); else openDay(s,'krankwoche')};
-  root.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>applySickWeek(s,inf.planned.id,b.dataset.week));
+    if(others.length===1) applyWeek(s,p.id,others[0].id,'krank'); else openDay(s,'krankwoche')};
+  if(q('swapweek')) q('swapweek').onclick=()=>{const p=inf.planned,others=data.members.filter(m=>m.id!==p.id);
+    if(others.length===1) applyWeek(s,p.id,others[0].id,'tausch'); else openDay(s,'tauschwoche')};
+  root.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>applyWeek(s,inf.planned.id,b.dataset.week,sheetMode==='tauschwoche'?'tausch':'krank'));
   if(q('back')) q('back').onclick=()=>openDay(s,'__keep');
   if(q('off')) q('off').onclick=()=>setO({reason:'frei'});
   if(q('reset')) q('reset').onclick=()=>setO(null);
@@ -667,12 +672,14 @@ function weekDaysOf(s,id){
   return out;
 }
 const fmtShort=s=>{const d=parse(s);return WD[d.getDay()]+' '+d.getDate()+'.'+(d.getMonth()+1)+'.'};
-function applySickWeek(s,sickId,pick){
-  const others=data.members.filter(m=>m.id!==sickId), days=weekDaysOf(s,sickId);
-  if(days.length) addLog(`${member(sickId).name} ist die Woche krank (${days.map(fmtShort).join(', ')})`);
+// whole week at once: all days in that week on which this person is planned (sick or swapped)
+function applyWeek(s,planId,pick,reason){
+  const others=data.members.filter(m=>m.id!==planId), days=weekDaysOf(s,planId), list=days.map(fmtShort).join(', ');
+  if(days.length) addLog(reason==='krank'?`${member(planId).name} ist die Woche krank (${list})`
+    :`${pick==='auto'?'Die anderen fahren':member(pick).name+' fährt'} die Woche statt ${member(planId).name} (${list})`);
   days.forEach((x,i)=>{
     const driver=pick==='auto'?others[i%others.length].id:pick;
-    data.overrides[x]={reason:'krank',driver};
+    data.overrides[x]={reason,driver};
   });
   closeSheet(); save();
 }
