@@ -83,8 +83,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline
 .chip{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:.78rem;font-family:var(--f-display)}
 .chip.lg{width:40px;height:40px;font-size:1rem}
 .day .flag{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%}
-.flag.sick{background:var(--sick)} .flag.makeup{background:var(--makeup)} .flag.swap{background:var(--muted)}
-.day .vacbar{position:absolute;left:6px;right:6px;bottom:2px;height:3px;border-radius:2px;background:var(--vac)}
+.flag.sick{background:var(--sick)} .flag.vac{background:var(--vac)} .flag.makeup{background:var(--makeup)} .flag.swap{background:var(--muted)}
 .day.prestart{background:transparent}
 .tag.vac{background:var(--vac-bg);color:var(--vac)}
 .btn.vac{color:var(--vac)}
@@ -232,7 +231,7 @@ function slot(s){ // weekly / monthly period number since start
   }
   return (d.getFullYear()-st.getFullYear())*12+(d.getMonth()-st.getMonth());
 }
-// daily: walk forward from the start date; each driving day the next person who is not on vacation drives.
+// daily: walk forward from the start date, each driving day the next person in the list.
 // Days that "fall out" don't use up a turn. Cached per render.
 let sched=null;
 function dailyIdx(s){
@@ -242,37 +241,47 @@ function dailyIdx(s){
   let x=sched.last?addDays(parse(sched.last),1):parse(data.start);
   while(ymd(x)<=s){
     const d=ymd(x); let idx=null;
-    if(counts(d)){
-      for(let k=0;k<n;k++){const j=(sched.ptr+k)%n; if(!onVac(data.members[j].id,d)){idx=j;break}}
-      if(idx!==null) sched.ptr=idx+1;
-    }
+    if(counts(d)){idx=sched.ptr%n; sched.ptr++;}
     sched.map[d]=idx; sched.last=d; x=addDays(x,1);
   }
   return s in sched.map?sched.map[s]:null;
 }
 function planned(s){
   if(!data.members.length||!isWork(s)||s<data.start) return null; // nothing before the carpool starts
-  const n=data.members.length;
   if(data.mode==='daily'){const i=dailyIdx(s);return i===null?null:data.members[i]}
-  const base=mod(slot(s),n);
-  for(let k=0;k<n;k++){const m=data.members[(base+k)%n]; if(!onVac(m.id,s)) return m}
+  return data.members[mod(slot(s),data.members.length)];
+}
+// vacation: whoever is next in the list (and not away) steps in; the person on vacation has to make it up later
+function vacSub(p,s){
+  const n=data.members.length, i=data.members.findIndex(m=>m.id===p.id);
+  for(let k=1;k<n;k++){const m=data.members[(i+k)%n]; if(!onVac(m.id,s)) return m}
   return null;
 }
 function info(s){
   const p=planned(s), o=ov(s);
   if(!p) return {planned:null,driver:null,status:'none'};
-  if(!o) return {planned:p,driver:p,status:'normal'};
-  if(o.reason==='frei') return {planned:p,driver:null,status:'frei'};
-  return {planned:p,driver:member(o.driver)||null,status:o.reason};
+  if(o&&o.reason==='frei') return {planned:p,driver:null,status:'frei'};
+  if(o) return {planned:p,driver:member(o.driver)||null,status:o.reason};
+  if(onVac(p.id,s)) return {planned:p,driver:vacSub(p,s),status:'urlaub'};
+  return {planned:p,driver:p,status:'normal'};
 }
-// who owes whom: whenever someone drives instead of the planned person, the planned person owes them one trip
+// who owes whom: whenever someone drives instead of the planned person (sick, swap, vacation),
+// the planned person owes them one trip
 function debts(){
-  const owe={};
+  const owe={}, add=(a,b)=>{const k=a+'>'+b; owe[k]=(owe[k]||0)+1};
   for(const [s,o] of Object.entries(data.overrides||{})){
     if(!o||o.reason==='frei') continue;
     const p=planned(s); if(!p||!o.driver||o.driver===p.id) continue;
     if(!member(o.driver)) continue;
-    const k=p.id+'>'+o.driver; owe[k]=(owe[k]||0)+1;
+    add(p.id,o.driver);
+  }
+  const seenDay=new Set();
+  for(const v of vacList()){
+    if(!member(v.member)) continue;
+    for(let x=parse(v.from<data.start?data.start:v.from);ymd(x)<=v.to;x=addDays(x,1)){
+      const s=ymd(x); if(seenDay.has(s)) continue;
+      const inf=info(s); if(inf.status==='urlaub'&&inf.driver){seenDay.add(s); add(inf.planned.id,inf.driver.id);}
+    }
   }
   const out=[], seen=new Set();
   for(const k of Object.keys(owe)){
@@ -486,7 +495,7 @@ async function init(){
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials=n=>{const p=n.trim().split(/\s+/);return (p[0][0]+(p[1]?p[1][0]:(p[0][1]||''))).toUpperCase()};
 const chip=(m,cls='')=>m?`<span class="chip ${cls}" style="background:${m.color}">${esc(initials(m.name))}</span>`:'';
-const tagFor=st=>st==='krank'?'<span class="tag sick">Ersatz wegen Krankheit</span>':st==='nachholen'?'<span class="tag makeup">Nachholfahrt</span>':st==='tausch'?'<span class="tag swap">Getauscht</span>':st==='frei'?'<span class="tag off">Fällt aus</span>':'';
+const tagFor=st=>st==='urlaub'?'<span class="tag vac">Ersatz wegen Urlaub</span>':st==='krank'?'<span class="tag sick">Ersatz wegen Krankheit</span>':st==='nachholen'?'<span class="tag makeup">Nachholfahrt</span>':st==='tausch'?'<span class="tag swap">Getauscht</span>':st==='frei'?'<span class="tag off">Fällt aus</span>':'';
 
 function render(){
   sched=null;
@@ -521,6 +530,7 @@ function ticketHTML(){
     if(inf.status==='krank') sub=esc(inf.planned.name)+' ist krank, '+esc(inf.driver.name)+' springt ein';
     else if(inf.status==='nachholen') sub=esc(inf.driver.name)+' holt eine Fahrt für '+esc(inf.planned.name)+' nach';
     else if(inf.status==='tausch') sub='Getauscht mit '+esc(inf.planned.name);
+    else if(inf.status==='urlaub') sub=esc(inf.planned.name)+' hat Urlaub, '+esc(inf.driver.name)+' springt ein';
     else sub=MODES[data.mode]+' im Wechsel';
   } else {
     const n=nextDriving(t,false);
@@ -543,9 +553,12 @@ function calView(){
     if(i>=35&&d.getMonth()!==view.m) break;
     const cls=['day']; if(d.getMonth()!==view.m) cls.push('out'); if(!isWork(s)) cls.push('weekend'); if(s===t) cls.push('today'); if(inf.status==='frei') cls.push('offday'); if(s<data.start) cls.push('prestart');
     const vac=vacOn(s);
-    const flag=inf.status==='krank'?'<span class="flag sick"></span>':inf.status==='nachholen'?'<span class="flag makeup"></span>':inf.status==='tausch'?'<span class="flag swap"></span>':'';
+    const flag=inf.status==='urlaub'?'<span class="flag vac"></span>':inf.status==='krank'?'<span class="flag sick"></span>':inf.status==='nachholen'?'<span class="flag makeup"></span>':inf.status==='tausch'?'<span class="flag swap"></span>':'';
     const lab=fmtLong(s)+(inf.driver?': '+inf.driver.name+' fährt':inf.status==='frei'?': fällt aus':': keine Fahrt')+(vac.length?', Urlaub: '+vac.map(v=>member(v.member).name).join(', '):'');
-    cells+=`<button class="${cls.join(' ')}" data-d="${s}" aria-label="${esc(lab)}"><span class="n">${d.getDate()}</span>${chip(inf.driver)}${flag}${vac.length?'<span class="vacbar"></span>':''}</button>`;
+    // vacation: frame the day in the colour of the person who is away (several people: rings inside each other)
+    const rings=vac.map((v,i)=>`inset 0 0 0 ${3*(i+1)}px ${member(v.member).color}`);
+    if(rings.length&&s===t) rings.unshift('0 0 0 2px var(--accent)');
+    cells+=`<button class="${cls.join(' ')}" data-d="${s}" aria-label="${esc(lab)}"${rings.length?` style="box-shadow:${rings.join(',')}"`:''}><span class="n">${d.getDate()}</span>${chip(inf.driver)}${flag}</button>`;
   }
   const ds=debts();
   const debtHTML=ds.length?`<ul class="debts">${ds.map(x=>{const a=member(x.debtor),b=member(x.creditor);return `<li class="debt">${chip(a)}<div class="txt"><b>${esc(a.name)}</b> muss für <b>${esc(b.name)}</b> nachholen</div><span class="cnt">${x.n}×</span></li>`}).join('')}</ul>`
@@ -555,7 +568,7 @@ function calView(){
     <div class="calhead"><h2>${MONTHS[view.m]} ${view.y}</h2>
       <div class="navgrp"><button class="iconbtn" id="prev" aria-label="Vorheriger Monat">‹</button><button class="iconbtn" id="now" style="padding:0 10px;font-size:.85rem">Heute</button><button class="iconbtn" id="next" aria-label="Nächster Monat">›</button></div></div>
     <div class="grid">${cells}</div>
-    <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span><span><i style="background:var(--vac);border-radius:2px;width:14px;height:4px"></i>Urlaub</span></div>
+    <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span><span><i style="background:transparent;border:2px solid var(--muted);border-radius:3px;width:12px;height:12px;box-sizing:border-box"></i>Rahmen: Urlaub (Farbe der Person)</span></div>
     <p class="hint" style="margin-top:8px">Tippe auf einen Tag, um Krankheit, Tausch oder Ausfall einzutragen.</p>
   </section>
   <section class="card"><div class="sectionh"><h3>Nachholen</h3><p>offene Fahrten</p></div>${debtHTML}</section>
@@ -583,7 +596,7 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
       <div class="who-pick">${data.members.map(m=>`<button class="btn" data-vacwho="${m.id}" aria-pressed="${vacDraft.member===m.id}" style="${vacDraft.member===m.id?'border-color:var(--vac);box-shadow:0 0 0 2px var(--vac)':''}">${chip(m)}${esc(m.name)}</button>`).join('')}</div>
       <div class="daterow"><div class="field"><label for="vfrom">Von</label><input type="date" id="vfrom" value="${vacDraft.from}"></div>
       <div class="field"><label for="vto">Bis</label><input type="date" id="vto" value="${vacDraft.to}"></div></div>
-      <p class="hint">In dieser Zeit wird die Person übersprungen. Die anderen wechseln sich ab, niemand muss etwas nachholen.</p>
+      <p class="hint">An ihren Fahrtagen springt die nächste Person aus der Liste ein. Die Fahrten müssen danach nachgeholt werden.</p>
       <p class="hint" id="vacerr" hidden style="color:var(--sick)"></p>
       <button class="btn primary" id="savevac">Urlaub speichern</button>
       <button class="btn ghost" id="back">Zurück</button>`;
@@ -608,7 +621,8 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
       <button class="btn ghost" id="back">Zurück</button>`;
   } else {
     const p=inf.planned;
-    const makeups=debts().filter(x=>x.creditor===p.id&&!(o&&o.driver===x.debtor));
+    const isVac=!o&&inf.status==='urlaub';
+    const makeups=isVac?[]:debts().filter(x=>x.creditor===p.id&&!(o&&o.driver===x.debtor));
     body=`<div class="plan">${chip(inf.driver||p,'lg')}<div class="txt">
         <div><b>${inf.driver?esc(inf.driver.name)+' fährt':'Keine Fahrt'}</b></div>
         <div class="sub">${inf.status==='normal'?'Laut Plan ('+MODES[data.mode].toLowerCase()+')':'Laut Plan: '+esc(p.name)}</div>
@@ -616,9 +630,9 @@ function openDay(s,mode){sheetMode=mode||null;const root=document.getElementById
       ${vacInfo}
       <div class="list">
         ${makeups.map(x=>{const a=member(x.debtor);return `<button class="btn makeup" data-makeup="${a.id}">${chip(a)}${esc(a.name)} holt hier nach (statt ${esc(p.name)})</button>`}).join('')}
-        ${o?'':`<button class="btn danger" id="sick">${chip(p)}${esc(p.name)} ist heute krank</button>`}
-        ${o&&o.reason==='frei'?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn danger" id="sickweek">${chip(p)}${esc(p.name)} ist die ganze Woche krank (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
-        ${o?'':`<button class="btn" id="swap">Jemand anderes fährt (Tausch)</button>`}
+        ${o||isVac?'':`<button class="btn danger" id="sick">${chip(p)}${esc(p.name)} ist heute krank</button>`}
+        ${(o&&o.reason==='frei')||isVac?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn danger" id="sickweek">${chip(p)}${esc(p.name)} ist die ganze Woche krank (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
+        ${o?'':`<button class="btn" id="swap">${isVac?'Andere Person springt ein':'Jemand anderes fährt (Tausch)'}</button>`}
         ${o&&o.reason==='frei'?'':(()=>{const n=weekDaysOf(s,p.id).length;return n?`<button class="btn" id="swapweek">Jemand anderes fährt die ganze Woche (${n} Fahrt${n===1?'':'en'})</button>`:''})()}
         ${o&&o.reason!=='frei'?`<button class="btn" id="swap">Andere Person eintragen</button>`:''}
         ${o&&o.reason==='frei'?'':`<button class="btn" id="off">Fahrt fällt aus (Feiertag, Ferien)</button>`}
@@ -704,7 +718,7 @@ function settingsView(){
     <div class="field"><label for="start">Startdatum</label><input type="date" id="start" value="${data.start}"></div>
     <div class="field"><span class="flabel">Fahrtage</span>${wdSeg(data.workdays)}</div>
   </section>
-  <section class="card stack"><div class="sectionh"><h3>Urlaub</h3><p>Wer im Urlaub ist, wird übersprungen</p></div>
+  <section class="card stack"><div class="sectionh"><h3>Urlaub</h3><p>Fahrten im Urlaub werden nachgeholt</p></div>
     ${upcoming.length?`<ul class="vlist">${upcoming.map(v=>{const m=member(v.member);return `<li>${chip(m)}<span class="txt"><b>${esc(m.name)}</b>, ${fmtShort(v.from)} bis ${fmtShort(v.to)}</span><button class="iconbtn" data-unvac2="${v.id}" aria-label="Urlaub von ${esc(m.name)} löschen">✕</button></li>`}).join('')}</ul>`
       :'<p class="hint" style="margin:0">Kein Urlaub eingetragen. Tippe im Kalender auf einen Tag und dann auf „Urlaub eintragen“.</p>'}
   </section>
