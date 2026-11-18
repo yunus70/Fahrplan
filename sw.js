@@ -1,6 +1,6 @@
 // Service Worker: hält die App offline verfügbar.
 // Bei jeder Änderung an den Dateien die Versionsnummer erhöhen, damit Handys die neue Version laden.
-const VERSION = 'fahrplan-v6';
+const VERSION = 'fahrplan-v7';
 const APP_FILES = [
   './',
   './index.html',

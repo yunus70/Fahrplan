@@ -267,6 +267,23 @@ function info(s){
 }
 // who owes whom: whenever someone drives instead of the planned person (sick, swap, vacation),
 // the planned person owes them one trip
+// vacation days only count once the day has come; planned (future) vacation is listed separately
+function vacDebtDays(future){
+  const out=[], seen=new Set(), t=todayStr();
+  for(const v of vacList()){
+    if(!member(v.member)) continue;
+    for(let x=parse(v.from<data.start?data.start:v.from);ymd(x)<=v.to;x=addDays(x,1)){
+      const s=ymd(x); if(seen.has(s)||(future?s<=t:s>t)) continue;
+      const inf=info(s); if(inf.status==='urlaub'&&inf.driver){seen.add(s); out.push({s,from:inf.planned,to:inf.driver});}
+    }
+  }
+  return out;
+}
+function plannedVacDebts(){
+  const m={};
+  for(const d of vacDebtDays(true)){const k=d.from.id+'>'+d.to.id; (m[k]=m[k]||{debtor:d.from,creditor:d.to,days:[]}).days.push(d.s)}
+  return Object.values(m).map(x=>(x.days.sort(),x)).sort((a,b)=>a.days[0]<b.days[0]?-1:1);
+}
 function debts(){
   const owe={}, add=(a,b)=>{const k=a+'>'+b; owe[k]=(owe[k]||0)+1};
   for(const [s,o] of Object.entries(data.overrides||{})){
@@ -275,14 +292,7 @@ function debts(){
     if(!member(o.driver)) continue;
     add(p.id,o.driver);
   }
-  const seenDay=new Set();
-  for(const v of vacList()){
-    if(!member(v.member)) continue;
-    for(let x=parse(v.from<data.start?data.start:v.from);ymd(x)<=v.to;x=addDays(x,1)){
-      const s=ymd(x); if(seenDay.has(s)) continue;
-      const inf=info(s); if(inf.status==='urlaub'&&inf.driver){seenDay.add(s); add(inf.planned.id,inf.driver.id);}
-    }
-  }
+  for(const d of vacDebtDays(false)) add(d.from.id,d.to.id);
   const out=[], seen=new Set();
   for(const k of Object.keys(owe)){
     const [a,b]=k.split('>'); const pair=[a,b].sort().join('|'); if(seen.has(pair)) continue; seen.add(pair);
@@ -571,10 +581,16 @@ function calView(){
     <div class="legend"><span><i style="background:var(--sick)"></i>Ersatz (krank)</span><span><i style="background:var(--makeup)"></i>Nachgeholt</span><span><i style="background:var(--muted)"></i>Getauscht</span><span><i style="background:transparent;border:2px solid var(--muted);border-radius:3px;width:12px;height:12px;box-sizing:border-box"></i>Rahmen: Urlaub (Farbe der Person)</span></div>
     <p class="hint" style="margin-top:8px">Tippe auf einen Tag, um Krankheit, Tausch oder Ausfall einzutragen.</p>
   </section>
-  <section class="card"><div class="sectionh"><h3>Nachholen</h3><p>offene Fahrten</p></div>${debtHTML}</section>
+  <section class="card"><div class="sectionh"><h3>Nachholen</h3><p>offene Fahrten</p></div>${debtHTML}${plannedHTML()}</section>
   <section class="card"><div class="sectionh"><h3>Reihenfolge</h3><p>${MODES[data.mode]} ab ${fmtLong(data.start)}</p></div>
     <div class="members">${data.members.map((m,i)=>`<span class="mem">${chip(m)}${i+1}. ${esc(m.name)}</span>`).join('')}</div></section>
   </div>`;
+}
+// small print: vacation that is planned but hasn't happened yet
+function plannedHTML(){
+  const p=plannedVacDebts(); if(!p.length) return '';
+  return `<p class="hint" style="margin-top:10px;font-size:.72rem">Geplanter Urlaub, zählt erst ab dem jeweiligen Tag zum Nachholen: ${p.map(x=>
+    `${esc(x.debtor.name)} → ${esc(x.creditor.name)} ${x.days.length}× (${x.days.map(fmtShort).join(', ')})`).join(' · ')}</p>`;
 }
 function bindCal(){
   document.getElementById('prev').onclick=()=>{view.m--;if(view.m<0){view.m=11;view.y--}render()};
